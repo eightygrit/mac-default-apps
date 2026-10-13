@@ -15,7 +15,7 @@
 # Environment overrides:
 #   SIGN_ID="..."              signing identity ("-" for ad-hoc)
 #   ARCH="arm64"               narrow the build (default: universal)
-#   DEPLOY_TARGET="12.0"       minimum macOS version
+#   DEPLOY_TARGET="13.0"       minimum macOS version
 
 set -euo pipefail
 
@@ -32,7 +32,7 @@ SWIFTCLI_TAG="2.0.3+swift5"
 # Universal by default: an x86_64-only pane cannot be loaded by
 # legacyLoader-arm64, and an arm64-only one leaves Intel Macs out.
 ARCH="${ARCH:-arm64 x86_64}"
-DEPLOY_TARGET="${DEPLOY_TARGET:-12.0}"
+DEPLOY_TARGET="${DEPLOY_TARGET:-13.0}"
 
 DO_INSTALL=1
 DO_CLI=0

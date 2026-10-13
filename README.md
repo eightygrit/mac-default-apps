@@ -52,12 +52,22 @@ cd SwiftDefaultApps
 
 SIGN_ID="-"                force an ad-hoc signature
 ARCH="arm64"               narrow the build (default: universal)
-DEPLOY_TARGET="12.0"       minimum macOS version
+DEPLOY_TARGET="13.0"       minimum macOS version
 ```
 
 One thing worth knowing when building this project: the `Packages/SwiftCLI-2.0.3` dependency has to be checked out at tag `2.0.3+swift5`. Tag `2.0.3` is Swift 3 code and fails to compile (`String.characters` was removed). `build.sh` fetches the correct tag automatically.
 
-The deployment target in the Xcode projects was raised from `10.12` to `12.0`, since `10.12` is below the range current Xcode accepts. No architecture settings were needed: the projects use `ARCHS_STANDARD`, which produces a universal binary on current toolchains by itself. The x86_64-only releases exist simply because they predate Apple Silicon.
+The pane requires macOS 13 (System Settings). No architecture settings were needed: the projects use `ARCHS_STANDARD`, which produces a universal binary on current toolchains by itself. The x86_64-only releases exist simply because they predate Apple Silicon.
+
+### Pane UI
+
+The pane is SwiftUI hosted in an `NSHostingView` (no nibs): a searchable list on the left and the selected item's handlers on the right. Search matches names, identifiers, bundle IDs and file extensions (type `.md` on the File Types tab to find Markdown), and ↑/↓ move through the results without leaving the search field. File Types can be grouped by kind or by the application that currently opens them; click a group header to collapse it, Option-click to collapse or expand every group. The sidebar is an `NSOutlineView`, so lists with thousands of types stay responsive.
+
+The Applications tab lists every scheme and type an application declares. Launch Services cannot clear a default, only replace it, so rows the application already owns offer a menu to hand them to another application, and the other rows offer "Make Default".
+
+Some changes, such as the default web browser, only take effect once you confirm a system prompt. The pane waits for Launch Services to report the new handler (or for the prompt to be declined) and always shows the handler actually in place, never the one it merely requested.
+
+System Settings shows third-party panes through `legacyLoader`, which mirrors a window sized exactly to the pane's view and never reports the space available or resizes it. The pane therefore reads the System Settings window size from the window list while it is visible and resizes its own window to match; the layout has no fixed heights and fills whatever size it gets.
 
 The deprecated LaunchServices calls the pane relies on (`LSSetDefaultHandlerForURLScheme`, `LSSetDefaultRoleHandlerForContentType`) and the private `_LSCopySchemesAndHandlerURLs` SPI were still functional when this was last verified; reading and writing handler associations both work.
 
