@@ -80,6 +80,8 @@ class LSWrappers {
 			var next: NSError? = error as NSError
 			while let current = next {
 				if current.domain == NSCocoaErrorDomain && current.code == NSUserCancelledError { self = .canceled; return }
+				if current.domain == NSCocoaErrorDomain && current.code == NSFileWriteNoPermissionError { self = .permissionDenied; return }
+				if current.domain == NSPOSIXErrorDomain && (current.code == Int(EPERM) || current.code == Int(EACCES)) { self = .permissionDenied; return }
 				if current.domain == NSOSStatusErrorDomain, let known = LSErrors(rawValue: OSStatus(truncatingIfNeeded: current.code)), known != .noError { self = known; return }
 				next = current.userInfo[NSUnderlyingErrorKey] as? NSError
 			}
@@ -496,8 +498,17 @@ class LSWrappers {
 }
 
 extension Result where Success == Void, Failure == LSWrappers.LSErrors {
-	/// The outcome `NSWorkspace` reports through the optional error of a completion handler.
+	/**
+	The outcome `NSWorkspace` reports through the optional error of a completion handler.
+	An error that nothing in `LSErrors` explains becomes `defaultErr`, which has no room for the system's own words, so they are logged.
+	*/
 	init(error: Error?) {
-		if let error { self = .failure(LSWrappers.LSErrors(error)) } else { self = .success(()) }
+		guard let error else { self = .success(()); return }
+		let mapped = LSWrappers.LSErrors(error)
+		if mapped == .defaultErr, !(error is LSWrappers.LSErrors) {
+			let described = error as NSError
+			NSLog("SwiftDefaultApps: macOS reported an error it has no message for: %@ (%@ %ld)", described.localizedDescription, described.domain, described.code)
+		}
+		self = .failure(mapped)
 	}
 }

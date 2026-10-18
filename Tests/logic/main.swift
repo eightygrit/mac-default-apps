@@ -82,6 +82,11 @@ check("OSStatus -54", E(osStatus(-54)), .permissionDenied)
 check("OSStatus of one of our own cases", E(osStatus(-10814)), .appNotFound)
 check("a declined prompt under a file error", E(cocoa(256, underlying: osStatus(-128))), .canceled)
 check("a denial under a file error", E(cocoa(256, underlying: osStatus(-54))), .permissionDenied)
+check("no permission to write", E(cocoa(NSFileWriteNoPermissionError)), .permissionDenied)
+check("no permission to write, a level down", E(cocoa(256, underlying: cocoa(NSFileWriteNoPermissionError))), .permissionDenied)
+check("POSIX: operation not permitted", E(NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM))), .permissionDenied)
+check("POSIX: permission denied", E(NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))), .permissionDenied)
+check("another POSIX error", E(NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT))), .defaultErr)
 check("two levels down", E(cocoa(256, underlying: cocoa(4, underlying: osStatus(-128)))), .canceled)
 check("a file error alone", E(cocoa(256)), .defaultErr)
 check("an unknown OSStatus", E(osStatus(-43)), .defaultErr)
@@ -204,6 +209,25 @@ check("a report after the time is up is ignored without harm", expired.code, E.t
 check("an operation that never reports and has no time", code(LSWrappers.awaitCompletion(timeout: 0) { _ in }), E.timedOut.rawValue)
 check("no error is success", code(Result(error: nil)), 0)
 check("an NSError is mapped", code(Result(error: NSError(domain: NSOSStatusErrorDomain, code: -128))), E.canceled.rawValue)
+// What an error that nothing explains leaves behind: the unknown error for the user, the system's own words in the log.
+func capturingStandardError(_ body: () -> Void) -> String {
+    let path = NSTemporaryDirectory() + "swda-logic-stderr-\(getpid())"
+    let saved = dup(2), file = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
+    dup2(file, 2)
+    body()
+    fflush(stderr)
+    dup2(saved, 2); close(saved); close(file)
+    defer { try? FileManager.default.removeItem(atPath: path) }
+    return (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+}
+var unexplained: Result<Void, E> = .success(())
+let logged = capturingStandardError {
+    unexplained = Result(error: NSError(domain: "org.example", code: 7, userInfo: [NSLocalizedDescriptionKey: "100% odd %@ %n"]))
+}
+check("an error nothing explains is the unknown error", code(unexplained), E.defaultErr.rawValue)
+check("its own words and codes are logged, untouched by formatting", logged.contains("100% odd %@ %n") && logged.contains("org.example 7"), true)
+check("an error that is explained logs nothing", capturingStandardError { _ = Result(error: NSError(domain: NSOSStatusErrorDomain, code: -128)) }.isEmpty, true)
+check("one of ours logs nothing either", capturingStandardError { _ = Result(error: E.defaultErr) }.isEmpty, true)
 
 // MARK: - Extension to UTI (PR #94)
 
