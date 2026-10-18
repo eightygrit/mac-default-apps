@@ -81,10 +81,8 @@ struct AppRef: Identifiable, Hashable {
 	let name: String
 	let path: String?
 
-	static let doNothingID = "cl.fail.lordkamina.ThisAppDoesNothing"
-
 	init?(bundleID: String) {
-		guard bundleID.caseInsensitiveCompare(AppRef.doNothingID) != .orderedSame else { return nil }
+		guard bundleID.caseInsensitiveCompare(DoNothingApp.bundleID) != .orderedSame else { return nil }
 		guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
 		self.id = bundleID
 		self.path = url.path
@@ -131,7 +129,7 @@ enum Catalog {
 			guard let paths = LSWrappers.copyAllApps() else { return nil }
 			let apps = concurrentMap(paths) { path -> Entry? in
 				guard let bundle = Bundle(path: path), let bundleID = bundle.bundleIdentifier,
-					  bundleID.caseInsensitiveCompare(AppRef.doNothingID) != .orderedSame,
+					  bundleID.caseInsensitiveCompare(DoNothingApp.bundleID) != .orderedSame,
 					  let declared = LSWrappers.copySchemesAndUTIsForApp(path) else { return nil }
 				let schemes = declared["URIs"]?.values.reduce(into: Set<String>()) { $0.formUnion($1) } ?? []
 				let types = declared["UTIs"]?.values.reduce(into: Set<String>()) { $0.formUnion($1) } ?? []
@@ -206,9 +204,14 @@ enum Catalog {
 
 	/** Sets the default handler. Returns an error message, or nil on success. */
 	static func setDefault(_ bundleID: String, for content: String, isScheme: Bool, role: Role = .all) -> String? {
+		let app: LSWrappers.ResolvedApp
+		switch LSWrappers.resolveApp(bundleID) {
+		case .failure(let error): return error.print(argument: (app: bundleID, content: content))
+		case .success(let resolved): app = resolved
+		}
 		let status = isScheme
-			? LSWrappers.Schemes.setDefaultHandler(content, bundleID)
-			: LSWrappers.UTIs.setDefaultHandler(content, bundleID, role.mask)
+			? LSWrappers.Schemes.setDefaultHandler(content, app)
+			: LSWrappers.UTIs.setDefaultHandler(content, app, role.mask)
 		return status == 0 ? nil : LSWrappers.LSErrors(value: status).print(argument: (app: bundleID, content: content))
 	}
 

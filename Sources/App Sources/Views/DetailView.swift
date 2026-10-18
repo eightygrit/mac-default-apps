@@ -118,7 +118,7 @@ private struct HandlerPicker: View {
 
 	private var currentTag: String {
 		guard let current = state.current else { return "" }
-		guard !state.isCurrent(AppRef.doNothingID) else { return AppRef.doNothingID }
+		guard !state.isCurrent(DoNothingApp.bundleID) else { return DoNothingApp.bundleID }
 		return state.candidates.first { $0.id.caseInsensitiveCompare(current) == .orderedSame }?.id ?? ""
 	}
 
@@ -132,7 +132,7 @@ private struct HandlerPicker: View {
 					.tag(app.id)
 			}
 			Divider()
-			Text("Do Nothing").tag(AppRef.doNothingID)
+			Text(DoNothingApp.displayName).tag(DoNothingApp.bundleID)
 			Text("Other…").tag(Self.otherTag)
 		}
 	}
@@ -276,7 +276,7 @@ private struct ClaimRow: View {
 
 	private var currentName: String? {
 		guard let current = claim.handlers.current else { return nil }
-		if claim.handlers.isCurrent(AppRef.doNothingID) { return "Do Nothing" }
+		if claim.handlers.isCurrent(DoNothingApp.bundleID) { return DoNothingApp.displayName }
 		return claim.handlers.candidates.first { $0.id.caseInsensitiveCompare(current) == .orderedSame }?.name ?? current
 	}
 

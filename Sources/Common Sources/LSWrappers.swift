@@ -28,7 +28,7 @@ class LSWrappers {
 	- invalidFileURL: Trying to locate a file with a scheme different from file://
 	- noError: No error occured. 
 	*/
-	internal enum LSErrors:OSStatus {
+	internal enum LSErrors:OSStatus, Error {
 		case invalidBundle = -67857
 		case invalidScheme = -30774
 		case incompatibleSys = -10825
@@ -81,9 +81,16 @@ class LSWrappers {
 			case .noError: retValue += "Default handler has succesfully changed to \(argument.app!)"
 			case .defaultErr: retValue += "An unknown error has occurred."
 			}
-			if ((self == .appNotFound || self == .deletedApp) && (argument.app == "None" || argument.app == "Do Nothing" || argument.app == "cl.fail.lordkamina.ThisAppDoesNothing")) { retValue += " (This error occurs when ThisAppDoesNothing.app is not found.)" }
+			if ((self == .appNotFound || self == .deletedApp) && DoNothingApp.isNamed(argument.app)) { retValue += " (This error occurs when \(DoNothingApp.fileName) is not found.)" }
 			return retValue
 		}
+	}
+	/**
+	An application that passed the sanity checks in `resolveApp(_:)`: where it lives and what Launch Services calls it.
+	*/
+	struct ResolvedApp {
+		let url: URL
+		let bundleID: String
 	}
 	/**
 	Groups functions dealing with UTIs.
@@ -178,14 +185,14 @@ class LSWrappers {
 		- See Also: `enum LSErrors` above.
 		- Parameters:
 		- inContent: A Uniform Type Identifier.
-		- inBundleID: A bundle-identifier referring to a valid application bundle. Specifying "None" will disable the default handler for that UTI.
+		- inApp: An application resolved by `resolveApp(_:)`. Resolving "None" selects the dummy application, which disables the default handler for that UTI.
 		- inRoles: The specified Launch Services Role to modify. Can correspond to "Editor", "Viewer", "Shell" or "None".
 		- Returns: A status-code. `0` on success, or a value corresponding to various possible errors.
 		*/
-		static func setDefaultHandler (_ inContent: String, _ inBundleID: String, _ inRoles: LSRolesMask = LSRolesMask.all) -> OSStatus {
+		static func setDefaultHandler (_ inContent: String, _ inApp: ResolvedApp, _ inRoles: LSRolesMask = LSRolesMask.all) -> OSStatus {
 			var retval: OSStatus = 0
-			if (LSWrappers.isAppInstalled(withBundleID: inBundleID) == true) {
-				retval = LSSetDefaultRoleHandlerForContentType(inContent as CFString, inRoles, inBundleID as CFString)
+			if (LSWrappers.ensureRegistered(inApp) == true) {
+				retval = LSSetDefaultRoleHandlerForContentType(inContent as CFString, inRoles, inApp.bundleID as CFString)
 			}
 			else { retval = kLSApplicationNotFoundErr }
 			return retval
@@ -278,14 +285,14 @@ class LSWrappers {
 		- See Also: `enum LSErrors` above.
 		- Parameters:
 		- inScheme: A valid URI Scheme.
-		- inBundleID: A bundle-identifier referring to a valid application bundle. Specifying "None" will disable the default handler for that URI Scheme.
+		- inApp: An application resolved by `resolveApp(_:)`. Resolving "None" selects the dummy application, which disables the default handler for that URI Scheme.
 		- Returns: A status-code. `0` on success, or a value corresponding to various possible errors.
 		*/
-		static func setDefaultHandler (_ inScheme: String, _ inBundleID: String) -> OSStatus {
+		static func setDefaultHandler (_ inScheme: String, _ inApp: ResolvedApp) -> OSStatus {
 			var retval: OSStatus = kLSUnknownErr
 			if ((inScheme =~ /"\\A[a-zA-Z][a-zA-Z0-9.+-]+$") == true) {
-				if (LSWrappers.isAppInstalled(withBundleID:inBundleID) == true) {
-					retval = LSSetDefaultHandlerForURLScheme((inScheme as CFString), (inBundleID as CFString))
+				if (LSWrappers.ensureRegistered(inApp) == true) {
+					retval = LSSetDefaultHandlerForURLScheme((inScheme as CFString), (inApp.bundleID as CFString))
 				}
 				else { retval = kLSApplicationNotFoundErr }
 			}
@@ -302,125 +309,80 @@ class LSWrappers {
 		return convertAppURLsToPaths(LSPrivate.copyAllApplicationURLs())
 	}
 	/**
-	Checks whether a given application is registered with Launch Services.
+	Checks whether a given application is registered with Launch Services. Has no side effects.
 	- Parameter withBundleID: A bundle identifier.
 	- Returns: `true` if the bundle identifier is registered with Launch Services as an application, `false` otherwise.
 	*/
 	static func isAppInstalled (withBundleID: String) -> Bool {
-		if (withBundleID == "cl.fail.lordkamina.ThisAppDoesNothing" && NSWorkspace.shared.absolutePathForApplication(withBundleIdentifier: "cl.fail.lordkamina.ThisAppDoesNothing") == nil) {
-			let appSearchPaths: [URL] = [ areWeCLI() ? Bundle.main.bundleURL : Bundle.main.resourceURL! ] +
-				FileManager.default.urls(for: FileManager.SearchPathDirectory.applicationDirectory, in: FileManager.SearchPathDomainMask.allDomainsMask)
-			var appPath: URL?
-			for path in appSearchPaths {
-				let appURL = path.appendingPathComponent("ThisAppDoesNothing.app").absoluteURL
-				if (FileManager.default.isExecutableFile(atPath: appURL.path) == true) {
-					appPath = appURL
-					break
-				}
-			}
-			guard appPath != nil else {
-				return false
-			}
-			do {
-				let ranApp = try NSWorkspace.shared.launchApplication(at: appPath!, options: [NSWorkspace.LaunchOptions.withoutAddingToRecents], configuration: [:])
-				if (ranApp.processIdentifier == -1) {
-					return false
-				}
-				else { return true }
-			}
-			catch {
-				return false
-			}
+		return !NSWorkspace.shared.urlsForApplications(withBundleIdentifier: withBundleID).isEmpty
+	}
+	/**
+	Makes sure Launch Services knows an application before a handler is assigned to it. Only the dummy application is ever registered on demand (launching it used to do that as a side effect); any other application must already be registered.
+	- Parameter app: An application resolved by `resolveApp(_:)`.
+	- Returns: `true` if Launch Services knows the application, `false` if it does not and could not be made to.
+	*/
+	static func ensureRegistered (_ app: ResolvedApp) -> Bool {
+		if isAppInstalled(withBundleID: app.bundleID) && FileManager.default.fileExists(atPath: app.url.path) { return true }
+		return app.bundleID == DoNothingApp.bundleID && LSRegisterURL(app.url as CFURL, true) == noErr
+	}
+	/**
+	Finds an application by its file name. Stands in for `NSWorkspace.fullPath(forApplication:)`, which is deprecated and has no replacement. Like it, anything that looks like a path is returned unchanged; otherwise registered applications are matched by file name (case-insensitive, ".app" optional, so "Spotlight.service" matches too).
+	- Note: Several registered copies can share a name (helpers nested inside other apps, an updater's staging copy). The best one wins: a copy outside another bundle beats one inside it, one in a standard Applications folder beats one elsewhere, the copy Launch Services itself ranks first for its bundle identifier beats the others, and the shortest path decides the rest.
+	- Parameter name: A path, or the name of an application, with or without ".app".
+	- Returns: A POSIX path, or nil if no registered application has that name.
+	*/
+	static func copyAppPath (named name: String) -> String? {
+		if name.hasPrefix("/") || name.hasPrefix("~") { return name }
+		let wanted = name.lowercased().hasSuffix(".app") ? [name.lowercased()] : [name.lowercased(), "\(name.lowercased()).app"]
+		let matches = (copyAllApps() ?? []).filter { wanted.contains(($0 as NSString).lastPathComponent.lowercased()) }
+		let standardFolders = FileManager.default.urls(for: .applicationDirectory, in: .allDomainsMask).map { $0.path } + ["/System/Library/CoreServices"]
+		// Lower is better.
+		func rank(_ path: String) -> Int {
+			let isNested = path.dropLast(4).contains(".app/")
+			let isStandard = standardFolders.contains { path.hasPrefix($0 + "/") }
+			let isPreferred = Bundle(path: path)?.bundleIdentifier.flatMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)?.path } == path
+			return (isNested ? 4 : 0) + (isStandard ? 0 : 2) + (isPreferred ? 0 : 1)
 		}
-		let retval: Bool = ((LSCopyApplicationURLsForBundleIdentifier(withBundleID as CFString,nil)?.takeRetainedValue() as NSArray?) != nil)
-		return retval
+		return matches.min { (rank($0), $0.count) < (rank($1), $1.count) }
 	}
 	/**
 	Performs a myriad of sanity checks on user input corresponding to a possible application. The main purpose of this function is to make sure we're passing a value as sane as possible to the setHandler functions.
 	- See Also: `enum LSErrors` above.
 	- Parameter inParam: The application to locate. It might correspond to a file-system URL, a POSIX path, a display name, a bundle identifier, or "None".
-	- Parameter outBundleID: This parameter is populated with a bundle identifier if a valid application bundle corresponding to the input parameter was found.
-	- Returns: A status-code. `0` on success, or a value corresponding to various possible errors.
+	- Returns: The application, or the error that says why it cannot be used.
 	*/
-	static func getBundleID (_ inParam: String, outBundleID: inout String?) -> OSStatus {
+	static func resolveApp (_ inParam: String) -> Result<ResolvedApp, LSErrors> {
 		var errCode = OSStatus()
 		let filemanager = FileManager.default
-		if (inParam == "None") { // None is a valid value for our dummy application.
-			outBundleID = "cl.fail.lordkamina.ThisAppDoesNothing"
-			return 0
+		func app(from bundle: Bundle, allowing types: Set<String>) -> Result<ResolvedApp, LSErrors> {
+			guard let type = bundle.getType(outError: &errCode) else { return .failure(LSErrors(value: errCode)) }
+			guard types.contains(type), let bundleID = bundle.bundleIdentifier else { return .failure(.notAnApp) }
+			return .success(ResolvedApp(url: bundle.bundleURL, bundleID: bundleID))
 		}
-		if NSWorkspace.shared.absolutePathForApplication(withBundleIdentifier: inParam) != nil  { // Check whether we have a valid Bundle ID for an application.
-			outBundleID = inParam
-			return 0
+		if DoNothingApp.isNamed(inParam) { // None is a valid value for our dummy application.
+			guard let url = DoNothingApp.copyURL() else { return .failure(.appNotFound) }
+			return .success(ResolvedApp(url: url, bundleID: DoNothingApp.bundleID))
 		}
-		else if let appPath = NSWorkspace.shared.fullPath(forApplication: inParam) { // Or an application designed by name
-			if let bundle = Bundle(path:appPath) {
-				if let type = bundle.getType(outError: &errCode) {
-					if (type == "APPL" || type == "FNDR") {
-						if let _ = bundle.bundleIdentifier {
-							outBundleID = bundle.bundleIdentifier
-							return 0
-						}
-						else { return kLSNotAnApplicationErr }
-					}
-					else { return kLSNotAnApplicationErr }
-				}
-				else { return errCode }
-			}
-			if (filemanager.fileExists(atPath: inParam) == true) { return kLSNotAnApplicationErr }
-			else { return kLSApplicationNotFoundErr }
+		if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: inParam) { // Check whether we have a valid Bundle ID for an application.
+			return .success(ResolvedApp(url: url, bundleID: inParam))
 		}
-			
+		else if let appPath = copyAppPath(named: inParam) { // Or an application designed by name
+			if let bundle = Bundle(path: appPath) { return app(from: bundle, allowing: ["APPL", "FNDR"]) }
+			return filemanager.fileExists(atPath: inParam) ? .failure(.notAnApp) : .failure(.appNotFound)
+		}
 		else {
-			if let bundle = Bundle(path: inParam) { // Is it a valid bundle path?
-				if let type = bundle.getType(outError: &errCode) {
-					if (type == "APPL") {
-						if let _ = bundle.bundleIdentifier {
-							outBundleID = bundle.bundleIdentifier
-							return 0
-						}
-						else { return kLSNotAnApplicationErr }
-					}
-					else { return kLSNotAnApplicationErr }
-				}
-				else { return errCode }
+			if let bundle = Bundle(path: inParam) { return app(from: bundle, allowing: ["APPL"]) } // Is it a valid bundle path?
+			if (filemanager.fileExists(atPath: inParam) == true) { return .failure(.notAnApp) } // Maybe it's a valid file path, but not an app bundle?
+			guard let url = URL(string: inParam) else { return .failure(.notAnApp) } // Let's fallback to an URL.
+			if (url.path != "") {
+				guard url.isFileURL else { return .failure(.notAnApp) }
+				guard filemanager.fileExists(atPath: url.path) else { return .failure(.appNotFound) } // No application found at this location.
+				guard let bundle = Bundle(url: url) else { return .failure(.notAnApp) } // Maybe it's a valid file URL, but not an app bundle?
+				return app(from: bundle, allowing: ["APPL"])
 			}
-			else {
-				if (filemanager.fileExists(atPath: inParam) == true) { // Maybe it's a valid file path, but not an app bundle?
-					return kLSNotAnApplicationErr
-				}
-				if let url = URL(string: inParam) { // Let's fallback to an URL.
-					if (url.path != "") {
-						if (url.isFileURL == true) {
-							if (filemanager.fileExists(atPath: url.path) == true) { //Is it a valid app URL?
-								if let bundle = Bundle(url: url) {
-									if let type = bundle.getType(outError: &errCode) {
-										if (type == "APPL") {
-											outBundleID = bundle.bundleIdentifier!
-											return 0
-										}
-										else { return kLSNotAnApplicationErr }
-									}
-									else { return errCode }
-								}
-								else { return kLSNotAnApplicationErr } // Maybe it's a valid file URL, but not an app bundle?
-							}
-							else {
-								return kLSApplicationNotFoundErr
-							} // No application found at this location.
-						}
-						else { return kLSNotAnApplicationErr }
-					}
-					else {
-						if (url.isFileURL == false) { return Int32(NSFileReadUnsupportedSchemeError) }
-					}
-				}
-				else {
-					return kLSNotAnApplicationErr
-				}
-			}
+			else if (url.isFileURL == false) { return .failure(.invalidFileURL) }
 		}
-		return kLSUnknownErr
+		return .failure(.defaultErr)
 	}
 	/**
 	Creates a list of UTIs and URI Schemes an application claims to be able to handle.

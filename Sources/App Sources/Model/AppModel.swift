@@ -162,7 +162,7 @@ final class AppModel: ObservableObject {
 	func addScheme(_ scheme: String) {
 		let scheme = scheme.trimmingCharacters(in: .whitespaces)
 		guard !scheme.isEmpty else { return }
-		if let error = Catalog.setDefault(AppRef.doNothingID, for: scheme, isScheme: true) {
+		if let error = Catalog.setDefault(DoNothingApp.bundleID, for: scheme, isScheme: true) {
 			errorMessage = error
 			return
 		}

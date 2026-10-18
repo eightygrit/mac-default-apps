@@ -60,13 +60,12 @@ check("message: noError", E.noError.print(argument: (app: "Foo", content: nil)),
 
 section("application resolution")
 func resolve(_ input: String) -> (status: OSStatus, bundleID: String?) {
-    var bundleID: String?
-    let status = LSWrappers.getBundleID(input, outBundleID: &bundleID)
-    return (status, bundleID)
+    switch LSWrappers.resolveApp(input) {
+    case .success(let app): return (0, app.bundleID)
+    case .failure(let error): return (error.rawValue, nil)
+    }
 }
-let doNothingID = "cl.fail.lordkamina.ThisAppDoesNothing"
 let resolveTable: [(input: String, status: OSStatus, bundleID: String?)] = [
-    ("None", 0, doNothingID),
     ("TextEdit", 0, "com.apple.TextEdit"),
     ("textedit", 0, "com.apple.TextEdit"),
     ("TextEdit.app", 0, "com.apple.TextEdit"),
@@ -88,14 +87,37 @@ for row in resolveTable {
     check("resolve [\(row.input)] status", got.status, row.status)
     check("resolve [\(row.input)] bundle ID", got.bundleID, row.bundleID)
 }
+// "None" selects the dummy application, which has to exist somewhere for the answer to be a success.
+if DoNothingApp.copyURL() != nil {
+    check("resolve [None] finds the dummy application", resolve("None").bundleID, DoNothingApp.bundleID)
+} else {
+    check("resolve [None] without a copy of the dummy application", resolve("None").status, E.appNotFound.rawValue)
+}
+check("resolve [com.apple.textedit] keeps the spelling it was given", resolve("com.apple.textedit").bundleID, "com.apple.textedit")
+check("Do Nothing is selected by None", DoNothingApp.isNamed("None"), true)
+check("Do Nothing is selected by its bundle identifier", DoNothingApp.isNamed(DoNothingApp.bundleID), true)
+check("Do Nothing is not selected by another spelling", DoNothingApp.isNamed("none"), false)
+check("Do Nothing is not selected by nothing", DoNothingApp.isNamed(nil), false)
+
+section("finding applications by name")
+check("a name finds the application", LSWrappers.copyAppPath(named: "TextEdit")?.hasSuffix("/TextEdit.app"), true)
+check("the name is case-insensitive and .app is optional", LSWrappers.copyAppPath(named: "textedit.APP"), LSWrappers.copyAppPath(named: "TextEdit"))
+check("a path is returned unchanged", LSWrappers.copyAppPath(named: "/some/where/Foo.app"), "/some/where/Foo.app")
+check("a home-relative path is returned unchanged", LSWrappers.copyAppPath(named: "~/Applications/Foo"), "~/Applications/Foo")
+check("an unknown name finds nothing", LSWrappers.copyAppPath(named: "NoSuchAppAnywhere"), nil)
+check("a registered bundle identifier is installed", LSWrappers.isAppInstalled(withBundleID: "com.apple.TextEdit"), true)
+check("an unknown bundle identifier is not installed", LSWrappers.isAppInstalled(withBundleID: "org.nonexistent.app"), false)
 
 // MARK: - Setters: requests that must be refused before anything is written
 
 section("setters refuse before writing")
-check("scheme with a space", LSWrappers.Schemes.setDefaultHandler("bad scheme", "com.apple.TextEdit"), E.invalidScheme.rawValue)
-check("scheme starting with a digit", LSWrappers.Schemes.setDefaultHandler("1bad", "com.apple.TextEdit"), E.invalidScheme.rawValue)
-check("scheme handler that is not installed", LSWrappers.Schemes.setDefaultHandler("nosuchscheme", "org.nonexistent.app"), kLSApplicationNotFoundErr)
-check("UTI handler that is not installed", LSWrappers.UTIs.setDefaultHandler("public.html", "org.nonexistent.app", .all), kLSApplicationNotFoundErr)
+// Every request below names an application that does not exist, so nothing can be written even if a check is skipped.
+let missingApp = LSWrappers.ResolvedApp(url: URL(fileURLWithPath: "/nonexistent/Foo.app"), bundleID: "org.nonexistent.app")
+check("scheme with a space", LSWrappers.Schemes.setDefaultHandler("bad scheme", missingApp), E.invalidScheme.rawValue)
+check("scheme starting with a digit", LSWrappers.Schemes.setDefaultHandler("1bad", missingApp), E.invalidScheme.rawValue)
+check("scheme handler that is not installed", LSWrappers.Schemes.setDefaultHandler("nosuchscheme", missingApp), kLSApplicationNotFoundErr)
+check("UTI handler that is not installed", LSWrappers.UTIs.setDefaultHandler("public.html", missingApp, .all), kLSApplicationNotFoundErr)
+check("an application that is not installed is not registered on demand", LSWrappers.ensureRegistered(missingApp), false)
 
 // MARK: - Extension to UTI (PR #94)
 
