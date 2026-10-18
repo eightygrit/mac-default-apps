@@ -20,6 +20,7 @@
 		EBFE66061E688AA80056E549 /* LSWrappers.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBFE66041E688AA80056E549 /* LSWrappers.swift */; };
 		4E35643320E2904BBA74527C /* DoNothingApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 405FB4EB7A7479629B0E1884 /* DoNothingApp.swift */; };
 		552528F25CF9C73D1B91DBFB /* LSPrivate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84D784E6895E906ABCFD83CA /* LSPrivate.swift */; };
+		0E910475959812DB0B8CF1E8 /* LSLegacyRoles.swift in Sources */ = {isa = PBXBuildFile; fileRef = D139D6FB16F768FBC6BF1278 /* LSLegacyRoles.swift */; };
 		EBFE66071E688AA80056E549 /* commonFuncs.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBFE66051E688AA80056E549 /* commonFuncs.swift */; };
 		EBA6B0A71EB6EB470080A783 /* LICENSE in CopyFiles */ = {isa = PBXBuildFile; fileRef = EBA6B0A31EB6EB300080A783 /* LICENSE */; };
 		EBA6B0A81EB6EB4A0080A783 /* README.md in CopyFiles */ = {isa = PBXBuildFile; fileRef = EBA6B0A41EB6EB300080A783 /* README.md */; };
@@ -107,6 +108,7 @@
 		EBFE66041E688AA80056E549 /* LSWrappers.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LSWrappers.swift; sourceTree = "<group>"; };
 		405FB4EB7A7479629B0E1884 /* DoNothingApp.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = DoNothingApp.swift; sourceTree = "<group>"; };
 		84D784E6895E906ABCFD83CA /* LSPrivate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LSPrivate.swift; sourceTree = "<group>"; };
+		D139D6FB16F768FBC6BF1278 /* LSLegacyRoles.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LSLegacyRoles.swift; sourceTree = "<group>"; };
 		EBFE66051E688AA80056E549 /* commonFuncs.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = commonFuncs.swift; sourceTree = "<group>"; };
 		EBA6B0991EB6E6140080A783 /* SwiftDefaultApps CLI.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = "SwiftDefaultApps CLI.xcodeproj"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -200,6 +202,7 @@
 				EBFE66041E688AA80056E549 /* LSWrappers.swift */,
 				405FB4EB7A7479629B0E1884 /* DoNothingApp.swift */,
 				84D784E6895E906ABCFD83CA /* LSPrivate.swift */,
+				D139D6FB16F768FBC6BF1278 /* LSLegacyRoles.swift */,
 				EBFE66051E688AA80056E549 /* commonFuncs.swift */,
 			);
 			name = "Common Sources";
@@ -348,6 +351,7 @@
 				EBFE66061E688AA80056E549 /* LSWrappers.swift in Sources */,
 				4E35643320E2904BBA74527C /* DoNothingApp.swift in Sources */,
 				552528F25CF9C73D1B91DBFB /* LSPrivate.swift in Sources */,
+				0E910475959812DB0B8CF1E8 /* LSLegacyRoles.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -152,6 +152,29 @@ check("http is a registered scheme", schemeList?.schemes.contains("http"), true)
 check("copySchemesAndHandlers maps http to an application", LSWrappers.Schemes.copySchemesAndHandlers()?["http"]?.hasSuffix(".app"), true)
 check("copyAllApps returns paths", LSWrappers.copyAllApps()?.first?.hasPrefix("/"), true)
 
+// MARK: - Per-role handlers (the legacy functions, looked up with dlsym)
+
+section("per-role handlers")
+check("the three role functions are available on this system", LSLegacyRoles.isAvailable, true)
+let htmlHandler = LSLegacyRoles.copyDefaultHandlerID("public.html", .all)
+check("public.html has a default handler", htmlHandler?.contains("."), true)
+check("Safari is among the handlers of public.html", LSLegacyRoles.copyAllHandlerIDs("public.html", .all)?.contains("com.apple.Safari"), true)
+check("an unknown UTI has no default handler", LSLegacyRoles.copyDefaultHandlerID("no.such.uti", .all), nil)
+check("an unknown UTI has no handlers", LSWrappers.UTIs.copyAllHandlers("no.such.uti", inRoles: .all), nil)
+check("the wrapper answers with the bundle identifier on request", LSWrappers.UTIs.copyDefaultHandler("public.html", inRoles: .all, asPath: false), htmlHandler)
+check("the wrapper answers with a path by default", LSWrappers.UTIs.copyDefaultHandler("public.html", inRoles: .all)?.hasSuffix(".app"), true)
+// With SWDA_NO_LEGACY_ROLES set the lookups fail, as they would on a system that removed the functions.
+// The write below names a UTI and an application that do not exist, so nothing could change even if the switch failed.
+setenv("SWDA_NO_LEGACY_ROLES", "1", 1)
+check("the functions are unavailable when switched off", LSLegacyRoles.isAvailable, false)
+check("no default handler when switched off", LSLegacyRoles.copyDefaultHandlerID("public.html", .all), nil)
+check("no handlers when switched off", LSLegacyRoles.copyAllHandlerIDs("public.html", .all), nil)
+check("the wrapper finds no default handler when switched off", LSWrappers.UTIs.copyDefaultHandler("public.html", inRoles: .viewer), nil)
+check("the wrapper finds no handlers when switched off", LSWrappers.UTIs.copyAllHandlers("public.html", inRoles: .viewer), nil)
+check("writing reports an incompatible system when switched off", LSLegacyRoles.setDefaultHandler("no.such.uti", .all, bundleID: "org.nonexistent.app"), E.incompatibleSys.rawValue)
+unsetenv("SWDA_NO_LEGACY_ROLES")
+check("the functions are available again once the switch is off", LSLegacyRoles.isAvailable, true)
+
 // MARK: - Helpers in commonFuncs.swift
 
 section("helpers")

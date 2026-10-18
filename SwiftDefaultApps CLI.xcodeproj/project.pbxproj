@@ -18,6 +18,7 @@
 		EB9A7F8F1E688ED600F7E83B /* LSWrappers.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB9A7F8D1E688ED600F7E83B /* LSWrappers.swift */; };
 		EE1D5860BD310BFE0CAA5193 /* DoNothingApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02476D2B717AE12086738DCD /* DoNothingApp.swift */; };
 		B5EC2FD60B788A2E2B3E3EC6 /* LSPrivate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B347F66DBECDB44B38602878 /* LSPrivate.swift */; };
+		7F7E86EDA0827396A361BB4A /* LSLegacyRoles.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC65F8396F1E4567B5BEDE61 /* LSLegacyRoles.swift */; };
 		EBB91C1722B56D2E0072B8E7 /* libSwiftCLI.a in Frameworks */ = {isa = PBXBuildFile; fileRef = OBJ_31 /* libSwiftCLI.a */; };
 		EBBCEE781E257BFF00DFC648 /* getSchemes.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBBCEE771E257BFF00DFC648 /* getSchemes.swift */; };
 		EBBCEE7A1E25BDD700DFC648 /* getUTIs.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBBCEE791E25BDD700DFC648 /* getUTIs.swift */; };
@@ -62,6 +63,7 @@
 		EB9A7F8D1E688ED600F7E83B /* LSWrappers.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LSWrappers.swift; sourceTree = "<group>"; };
 		02476D2B717AE12086738DCD /* DoNothingApp.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = DoNothingApp.swift; sourceTree = "<group>"; };
 		B347F66DBECDB44B38602878 /* LSPrivate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LSPrivate.swift; sourceTree = "<group>"; };
+		CC65F8396F1E4567B5BEDE61 /* LSLegacyRoles.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LSLegacyRoles.swift; sourceTree = "<group>"; };
 		EBBCEE771E257BFF00DFC648 /* getSchemes.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = getSchemes.swift; sourceTree = "<group>"; };
 		EBBCEE791E25BDD700DFC648 /* getUTIs.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = getUTIs.swift; sourceTree = "<group>"; };
 		OBJ_10 /* CLI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLI.swift; sourceTree = "<group>"; };
@@ -135,6 +137,7 @@
 				EB9A7F8D1E688ED600F7E83B /* LSWrappers.swift */,
 				02476D2B717AE12086738DCD /* DoNothingApp.swift */,
 				B347F66DBECDB44B38602878 /* LSPrivate.swift */,
+				CC65F8396F1E4567B5BEDE61 /* LSLegacyRoles.swift */,
 			);
 			path = "Common Sources";
 			sourceTree = "<group>";
@@ -330,6 +333,7 @@
 				EB9A7F8F1E688ED600F7E83B /* LSWrappers.swift in Sources */,
 				EE1D5860BD310BFE0CAA5193 /* DoNothingApp.swift in Sources */,
 				B5EC2FD60B788A2E2B3E3EC6 /* LSPrivate.swift in Sources */,
+				7F7E86EDA0827396A361BB4A /* LSLegacyRoles.swift in Sources */,
 				EBBCEE781E257BFF00DFC648 /* getSchemes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

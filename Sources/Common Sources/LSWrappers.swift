@@ -124,8 +124,7 @@ class LSWrappers {
 		- Returns: The Bundle identifier or POSIX path of an application, or nil if no valid handler was found.
 		*/
 		static func copyDefaultHandler (_ inUTI:String, inRoles: LSRolesMask = [LSRolesMask.viewer,LSRolesMask.editor], asPath: Bool = true) -> String? {
-			if let value = LSCopyDefaultRoleHandlerForContentType(inUTI as CFString, inRoles) {
-				let handlerID = value.takeRetainedValue() as String
+			if let handlerID = LSLegacyRoles.copyDefaultHandlerID(inUTI, inRoles) {
 				if (asPath == true) {
 					if let handlerURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: handlerID) {
 						return handlerURL.path
@@ -144,8 +143,7 @@ class LSWrappers {
 		*/
 		static func copyAllHandlers (_ inUTI:String, inRoles: LSRolesMask = [LSRolesMask.viewer,LSRolesMask.editor], asPath: Bool = true) -> Array<String>? {
 			var handlers: Array<String> = []
-			if let value = LSCopyAllRoleHandlersForContentType(inUTI as CFString, inRoles) {
-				let handlerIDs = (value.takeRetainedValue() as! Array<String>)
+			if let handlerIDs = LSLegacyRoles.copyAllHandlerIDs(inUTI, inRoles) {
 				if (asPath == true) {
 					for handlerID in handlerIDs {
 						if let handlerURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: handlerID) {
@@ -192,7 +190,7 @@ class LSWrappers {
 		static func setDefaultHandler (_ inContent: String, _ inApp: ResolvedApp, _ inRoles: LSRolesMask = LSRolesMask.all) -> OSStatus {
 			var retval: OSStatus = 0
 			if (LSWrappers.ensureRegistered(inApp) == true) {
-				retval = LSSetDefaultRoleHandlerForContentType(inContent as CFString, inRoles, inApp.bundleID as CFString)
+				retval = LSLegacyRoles.setDefaultHandler(inContent, inRoles, bundleID: inApp.bundleID)
 			}
 			else { retval = kLSApplicationNotFoundErr }
 			return retval
