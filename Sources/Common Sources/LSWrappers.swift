@@ -110,7 +110,7 @@ class LSWrappers {
 			case .canceled: retValue += "Changing the default handler for \(content) was canceled."
 			case .permissionDenied: retValue += "macOS did not allow changing the default handler for \(content)."
 			case .timedOut: retValue += "Timed out waiting for the change of the default handler for \(content)."
-			case .noError: retValue += "Default handler has succesfully changed to \(app)"
+			case .noError: retValue += "Default handler has successfully changed to \(app)"
 			case .defaultErr: retValue += "An unknown error has occurred."
 			}
 			if ((self == .appNotFound || self == .deletedApp) && DoNothingApp.isNamed(argument.app)) { retValue += " (This error occurs when \(DoNothingApp.fileName) is not found.)" }

@@ -5,7 +5,7 @@
 // declared, leading underscore included (the three private functions start with one), so each name below
 // must report "found as [<that name>]". The last one does not exist and must report "found as []".
 import Foundation
-for s in ["_LSCopySchemesAndHandlerURLs", "_LSCopyAllApplicationURLs", "_UTCopyDeclaredTypeIdentifiers", "LSCopyApplicationURLsForBundleIdentifier", "LSSetDefaultHandlerForURLScheme", "_LSNoSuchSymbolForTest"] {
+for s in ["_LSCopySchemesAndHandlerURLs", "_LSCopyAllApplicationURLs", "_UTCopyDeclaredTypeIdentifiers", "LSCopyDefaultRoleHandlerForContentType", "LSCopyAllRoleHandlersForContentType", "LSSetDefaultRoleHandlerForContentType", "_LSNoSuchSymbolForTest"] {
     // Also try the name without its leading underscore: it must NOT resolve (that would be a different function).
     let name = s.hasPrefix("_") ? String(s.dropFirst()) : s
     let candidates = s.hasPrefix("_") ? [s, name] : [s]

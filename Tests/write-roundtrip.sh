@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # GUARDED. This script CHANGES real default handlers on the Mac it runs on, and then puts them back.
-# Run it only while you are sitting at the machine: macOS may ask for consent in a dialog, and one case
+# Run it only while you are sitting at the machine: macOS may ask you to confirm in a prompt, and one case
 # needs you to decline it.
 #
 # usage: Tests/write-roundtrip.sh [--i-understand] <path-to-swda> [case ...]
@@ -167,7 +167,7 @@ case_decline() {
 	pick_uti || { note "no suitable UTI; try SWDA_TEST_UTI"; return; }
 	LABEL="decline $UTI"
 	begin || return
-	say "    >>> If macOS asks for permission now, click Cancel / \"Don't Allow\"."
+	say "    >>> If macOS asks you to confirm now, decline it (Cancel / \"Don't Allow\")."
 	RESTORE+=("$(printf '%q ' "$SWDA" setHandler --UTI "$UTI" --app "$ORIG")")
 	out="$("$SWDA" setHandler --UTI "$UTI" --app "$TARGET" 2>&1)"; rc=$?
 	say "    swda (exit $rc): $out"
@@ -227,7 +227,7 @@ if [ "$dry" = 0 ]; then
 	cat <<BANNER
 This changes real default handlers on this Mac, then restores them.
 Cases: $CASES
-Have the machine in front of you: macOS may ask permission, and 'decline' needs you to say no.
+Have the machine in front of you: macOS may ask you to confirm, and 'decline' needs you to say no.
 BANNER
 	printf 'Type yes to continue: '
 	read -r answer </dev/tty

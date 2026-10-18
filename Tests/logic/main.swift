@@ -63,7 +63,7 @@ check("message: permissionDenied", E.permissionDenied.print(argument: (app: "Foo
 check("message: timedOut", E.timedOut.print(argument: (app: "Foo", content: "public.json")),
       "SwiftDefaultApps ERROR -1712: Timed out waiting for the change of the default handler for public.json.")
 check("message: noError", E.noError.print(argument: (app: "Foo", content: nil)),
-      "SwiftDefaultApps SUCCESS: Default handler has succesfully changed to Foo")
+      "SwiftDefaultApps SUCCESS: Default handler has successfully changed to Foo")
 // A missing argument used to be force-unwrapped, which crashed.
 for error in [E.notAnApp, .appNotFound, .invalidScheme, .invalidFileURL, .unknownUTI, .deletedApp, .invalidBundle, .incompatibleSys, .canceled, .permissionDenied, .timedOut, .noError] {
     check("message without arguments: \(error)", error.print(argument: (app: nil, content: nil)).hasPrefix(error == .noError ? "SwiftDefaultApps SUCCESS: " : "SwiftDefaultApps ERROR \(error.rawValue): "), true)

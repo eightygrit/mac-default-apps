@@ -69,7 +69,7 @@ so compiling them prints deprecation warnings (hidden unless the compile fails).
 | `utt` | Do the deprecated `UTType` C functions and `UniformTypeIdentifiers.UTType` agree? | Descriptions, extension lists and `isDynamic` agree everywhere. The `public.item`/`public.content` filter differs for 2 of 2,685 declared types (`public.presentation`, `public.spreadsheet`). |
 | `extension` | What does `--extension` (PR #94) resolve to, and what does a real file get? | `UTType(tag:tagClass:conformingTo: nil)` equals the old call for 1,252 of 1,254 extensions; `UTType(filenameExtension:)` differs for 173 (it conforms to `.data`). For an unknown extension the old call gives `dyn.age8…` but a real file is typed `dyn.ah62d4rv4ge8…`. |
 | `spi-fallback` | How much of the private enumerations can public API recover? | 416 of 525 applications, 253 of 278 URL schemes, 1,098 of 1,319 UTIs. The private calls stay, behind `dlsym`. |
-| `dlsym` | Are the private and legacy symbols reachable through `dlsym`? | All five, under their exact C names; the made-up one is not. |
+| `dlsym` | Are the private and legacy symbols reachable through `dlsym`? | All six (the three private functions and the three per-role ones), under their exact C names; the made-up one is not. |
 | `openswith` | Which application opens this file, and what type is it? | Prints a line per file; used by `write-roundtrip.sh`. |
 
 The digits move with the installed applications (registering one more application can shift a count by several);
@@ -94,7 +94,7 @@ builds can be compared with `diff`. Unlike `build.sh` it does not sign, install 
 ## Writes (guarded)
 
 `write-roundtrip.sh` changes real default handlers and puts them back. Without `--i-understand` it only chooses
-its subjects and prints the plan. Run it while you are at the machine: macOS may show a consent dialog, and the
+its subjects and prints the plan. Run it while you are at the machine: macOS may ask you to confirm in a prompt, and the
 `decline` case needs you to answer "no". Every case sets a handler, reads it back, checks that the change stays
 for five seconds, restores the original and reads that back; a trap restores whatever is still changed if you
 interrupt it. It never touches `http`, `https`, `ftp`, `file`, `mailto` or `public.html`.
