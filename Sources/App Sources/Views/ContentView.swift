@@ -33,9 +33,9 @@ struct ContentView: View {
 				.fixedSize()
 			}
 		}
-		.alert("Couldn't Change the Default Application", isPresented: Binding(
+		.alert(model.errorTitle, isPresented: Binding(
 			get: { model.errorMessage != nil },
-			set: { if !$0 { model.errorMessage = nil } }
+			set: { if !$0 { model.errorMessage = nil; model.errorTitle = AppModel.defaultErrorTitle } }
 		)) {
 			Button("OK", role: .cancel) {}
 		} message: {

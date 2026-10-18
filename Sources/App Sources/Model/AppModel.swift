@@ -36,7 +36,10 @@ final class AppModel: ObservableObject {
 	@Published var typeGrouping: TypeGrouping = .none {
 		didSet { refresh() }
 	}
+	/** What the alert says could not be done, and `errorMessage` why. It goes back to `defaultErrorTitle` when the alert is dismissed. */
+	@Published var errorTitle = AppModel.defaultErrorTitle
 	@Published var errorMessage: String?
+	static let defaultErrorTitle = "Couldn't Change the Default Application"
 	/** Current list, filtered, ranked and grouped. */
 	@Published private(set) var sections: [EntrySection] = []
 	/** Bumped whenever `sections` or the collapsed groups change, so the list view knows to reload. */
@@ -147,7 +150,10 @@ final class AppModel: ObservableObject {
 		}
 		entries[category] = result ?? []
 		loading.remove(category)
-		if result == nil { errorMessage = "The list of \(category.rawValue) is not available on this version of macOS." }
+		if result == nil {
+			errorTitle = "Couldn't Load \(category.rawValue)"
+			errorMessage = "The list of \(category.rawValue) is not available on this version of macOS."
+		}
 		if category == self.category { refresh() }
 	}
 
