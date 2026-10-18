@@ -166,6 +166,11 @@ if case .success(let textEdit) = LSWrappers.resolveApp("com.apple.TextEdit") {
     check("TextEdit resolves", false, true)
 }
 check("a UTI nobody declared, for a missing application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", missingApp, completionHandler: $0) }, .unknownUTI)
+check("a UTI nobody declared, for one role and a missing application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", missingApp, .viewer, completionHandler: $0) }, .unknownUTI)
+if case .success(let textEdit) = LSWrappers.resolveApp("com.apple.TextEdit") {
+    check("a UTI nobody declared, for one role and an installed application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, .viewer, completionHandler: $0) }, .unknownUTI)
+    check("a UTI nobody declared, for viewer and editor", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, [.viewer, .editor], completionHandler: $0) }, .unknownUTI)
+}
 
 // MARK: - Waiting for a completion handler (the command line)
 

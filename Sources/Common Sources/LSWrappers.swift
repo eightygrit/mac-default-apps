@@ -228,13 +228,13 @@ class LSWrappers {
 		- completionHandler: Called exactly once, on any queue, and before this function returns if the request is refused up front (unknown UTI, application not found) or answered by `LSLegacyRoles`.
 		*/
 		static func setDefaultHandler (_ inContent: String, _ inApp: ResolvedApp, _ inRoles: LSRolesMask = .all, completionHandler: @escaping (Result<Void, LSErrors>) -> Void) {
+			// Both paths refuse a UTI the system does not know: recording a preference for it would help nobody.
+			guard let type = UTType(inContent) else { completionHandler(.failure(.unknownUTI)); return }
+			guard LSWrappers.ensureRegistered(inApp) else { completionHandler(.failure(.appNotFound)); return }
 			if LSLegacyRoles.isRoleless(inRoles) {
-				guard let type = UTType(inContent) else { completionHandler(.failure(.unknownUTI)); return }
-				guard LSWrappers.ensureRegistered(inApp) else { completionHandler(.failure(.appNotFound)); return }
 				NSWorkspace.shared.setDefaultApplication(at: inApp.url, toOpen: type) { completionHandler(Result(error: $0)) }
 			}
 			else {
-				guard LSWrappers.ensureRegistered(inApp) else { completionHandler(.failure(.appNotFound)); return }
 				let status = LSLegacyRoles.setDefaultHandler(inContent, inRoles, bundleID: inApp.bundleID)
 				completionHandler(status == 0 ? .success(()) : .failure(LSErrors(value: status)))
 			}
