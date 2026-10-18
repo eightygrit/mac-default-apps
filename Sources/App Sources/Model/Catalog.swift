@@ -32,8 +32,6 @@ enum Role: String, CaseIterable, Identifiable {
 		case .shell: return .shell
 		}
 	}
-	/** Roles queried to report the current default; mirrors how Launch Services resolves "open". */
-	var queryMask: LSRolesMask { self == .all ? [.viewer, .editor] : mask }
 }
 
 /** Content and applications an application declares it can open. */
@@ -168,7 +166,7 @@ enum Catalog {
 	}
 
 	static func defaultHandler(forType identifier: String, role: Role = .all) -> String? {
-		LSWrappers.UTIs.copyDefaultHandler(identifier, inRoles: role.queryMask, asPath: false)
+		LSWrappers.UTIs.copyDefaultHandler(identifier, inRoles: role.mask, asPath: false)
 	}
 
 	/** Default handler of each UTI, keyed by UTI; UTIs without one are omitted. */

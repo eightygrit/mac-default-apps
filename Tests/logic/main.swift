@@ -2,6 +2,7 @@
 // Build and run with Tests/logic/run.sh. Add a check next to the behavior it pins, and change an expected
 // value only together with the code change that makes it change on purpose.
 import AppKit
+import UniformTypeIdentifiers
 
 var checks = 0
 var failures = 0
@@ -179,6 +180,31 @@ check("an unknown scheme has no handlers", LSWrappers.Schemes.copyAllHandlers("n
 check("something that is not a scheme has no handlers", LSWrappers.Schemes.copyAllHandlers("bad scheme"), nil)
 check("an unknown scheme has no name", LSWrappers.Schemes.copyNameForScheme("nosuchscheme"), nil)
 
+// MARK: - Which requests are role-less
+
+section("role-less requests")
+check("all roles", LSLegacyRoles.isRoleless(.all), true)
+check("viewer, editor and shell together", LSLegacyRoles.isRoleless([.viewer, .editor, .shell]), true)
+check("every role named", LSLegacyRoles.isRoleless([.none, .viewer, .editor, .shell]), true)
+check("viewer and editor are not enough", LSLegacyRoles.isRoleless([.viewer, .editor]), false)
+check("viewer", LSLegacyRoles.isRoleless(.viewer), false)
+check("editor", LSLegacyRoles.isRoleless(.editor), false)
+check("shell", LSLegacyRoles.isRoleless(.shell), false)
+check("none", LSLegacyRoles.isRoleless(.none), false)
+check("no role at all", LSLegacyRoles.isRoleless([]), false)
+let htmlType = UTType("public.html")!
+check("a role-less default is what NSWorkspace opens", LSWrappers.UTIs.copyDefaultHandler("public.html"), NSWorkspace.shared.urlForApplication(toOpen: htmlType)?.path)
+check("the default argument is role-less", LSWrappers.UTIs.copyDefaultHandler("public.html"), LSWrappers.UTIs.copyDefaultHandler("public.html", inRoles: .all))
+check("all roles are the handlers NSWorkspace lists", LSWrappers.UTIs.copyAllHandlers("public.html"), LSWrappers.copyHandlers(from: NSWorkspace.shared.urlsForApplications(toOpen: htmlType), asPath: true))
+check("Safari can open public.html", LSWrappers.UTIs.copyAllHandlers("public.html", asPath: false)?.contains("com.apple.Safari"), true)
+let htmlHandlers = LSWrappers.UTIs.copyAllHandlers("public.html", asPath: false) ?? []
+check("no application is listed twice for a type", Set(htmlHandlers.map { $0.lowercased() }).count, htmlHandlers.count)
+check("a role-less default is one of the role-less handlers", LSWrappers.UTIs.copyAllHandlers("public.html", asPath: false)?.contains(LSWrappers.UTIs.copyDefaultHandler("public.html", asPath: false) ?? ""), true)
+check("an unknown UTI has no role-less default", LSWrappers.UTIs.copyDefaultHandler("no.such.uti"), nil)
+check("an explicit role is answered by the legacy function", LSWrappers.UTIs.copyDefaultHandler("public.html", inRoles: .viewer, asPath: false), LSLegacyRoles.copyDefaultHandlerID("public.html", .viewer))
+check("viewer and editor together are answered by the legacy function", LSWrappers.UTIs.copyDefaultHandler("public.html", inRoles: [.viewer, .editor], asPath: false), LSLegacyRoles.copyDefaultHandlerID("public.html", [.viewer, .editor]))
+check("the handlers of one role are the legacy function's", LSWrappers.UTIs.copyAllHandlers("com.adobe.pdf", inRoles: .editor, asPath: false), LSLegacyRoles.copyAllHandlerIDs("com.adobe.pdf", .editor))
+
 // MARK: - Per-role handlers (the legacy functions, looked up with dlsym)
 
 section("per-role handlers")
@@ -198,6 +224,8 @@ check("no default handler when switched off", LSLegacyRoles.copyDefaultHandlerID
 check("no handlers when switched off", LSLegacyRoles.copyAllHandlerIDs("public.html", .all), nil)
 check("the wrapper finds no default handler when switched off", LSWrappers.UTIs.copyDefaultHandler("public.html", inRoles: .viewer), nil)
 check("the wrapper finds no handlers when switched off", LSWrappers.UTIs.copyAllHandlers("public.html", inRoles: .viewer), nil)
+check("a role-less request does not need the functions", LSWrappers.UTIs.copyDefaultHandler("public.html"), NSWorkspace.shared.urlForApplication(toOpen: htmlType)?.path)
+check("a role-less list does not need them either", LSWrappers.UTIs.copyAllHandlers("public.html")?.isEmpty, false)
 check("writing reports an incompatible system when switched off", LSLegacyRoles.setDefaultHandler("no.such.uti", .all, bundleID: "org.nonexistent.app"), E.incompatibleSys.rawValue)
 unsetenv("SWDA_NO_LEGACY_ROLES")
 check("the functions are available again once the switch is off", LSLegacyRoles.isAvailable, true)

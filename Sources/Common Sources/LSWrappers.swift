@@ -120,10 +120,14 @@ class LSWrappers {
 		/**
 		Copies the bundle identifier of the application currently registered as the default handler for a given UTI.
 		- Parameter inUTI: A Uniform Type Identifier.
-		- Parameter inRoles: The specified Launch Services Role to query. Can correspond to "Editor", "Viewer", "Shell" or "None". By default, we are only concerned with viewers and editors (in that order).
+		- Parameter inRoles: The specified Launch Services Role to query. Can correspond to "Editor", "Viewer", "Shell" or "None". By default, and for any mask that covers viewer, editor and shell, we ask what opens the file whatever the role, which `NSWorkspace` answers. A narrower mask is answered by `LSLegacyRoles`.
 		- Returns: The Bundle identifier or POSIX path of an application, or nil if no valid handler was found.
 		*/
-		static func copyDefaultHandler (_ inUTI:String, inRoles: LSRolesMask = [LSRolesMask.viewer,LSRolesMask.editor], asPath: Bool = true) -> String? {
+		static func copyDefaultHandler (_ inUTI:String, inRoles: LSRolesMask = .all, asPath: Bool = true) -> String? {
+			if LSLegacyRoles.isRoleless(inRoles) {
+				guard let type = UTType(inUTI), let url = NSWorkspace.shared.urlForApplication(toOpen: type) else { return nil }
+				return LSWrappers.copyHandlers(from: [url], asPath: asPath)?.first
+			}
 			if let handlerID = LSLegacyRoles.copyDefaultHandlerID(inUTI, inRoles) {
 				if (asPath == true) {
 					if let handlerURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: handlerID) {
@@ -138,10 +142,14 @@ class LSWrappers {
 		/**
 		Creates a list of all currently registered handlers for a given UTI.
 		- Parameter inUTI: A Uniform Type Identifier.
-		- Parameter inRoles: The specified Launch Services Role to query. Can correspond to "Editor", "Viewer", "Shell" or "None". By default, we are only concerned with viewers and editors (in that order).
+		- Parameter inRoles: The specified Launch Services Role to query. Can correspond to "Editor", "Viewer", "Shell" or "None". By default, and for any mask that covers viewer, editor and shell, we ask which applications can open the file whatever the role, which `NSWorkspace` answers, so an application whose role for the type is "None" is not listed. A narrower mask is answered by `LSLegacyRoles`.
 		- Returns: An array of strings corresponding to the Bundle identifiers or POSIX paths of all currently registered handlers, or nil of none were found.
 		*/
-		static func copyAllHandlers (_ inUTI:String, inRoles: LSRolesMask = [LSRolesMask.viewer,LSRolesMask.editor], asPath: Bool = true) -> Array<String>? {
+		static func copyAllHandlers (_ inUTI:String, inRoles: LSRolesMask = .all, asPath: Bool = true) -> Array<String>? {
+			if LSLegacyRoles.isRoleless(inRoles) {
+				guard let type = UTType(inUTI) else { return nil }
+				return LSWrappers.copyHandlers(from: NSWorkspace.shared.urlsForApplications(toOpen: type), asPath: asPath)
+			}
 			var handlers: Array<String> = []
 			if let handlerIDs = LSLegacyRoles.copyAllHandlerIDs(inUTI, inRoles) {
 				if (asPath == true) {
