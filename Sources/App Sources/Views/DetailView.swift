@@ -99,8 +99,9 @@ private struct ContentDetail: View {
 			let result = await Catalog.setDefault(bundleID, for: content, isScheme: isScheme, role: role)
 			let succeeded = model.report(result, app: bundleID, content: content)
 			var prompted = false
-			if succeeded, !LSLegacyRoles.isRoleless(role.mask) {
-				// A single role is changed by a function that does not wait for macOS, or for the user.
+			if succeeded {
+				// A single role is changed by a function that does not wait for macOS, or for the user, and a read can trail even
+				// a change macOS has reported: give the new handler a moment to show up before saying that it did not.
 				prompted = await Catalog.settledDefault(for: content, isScheme: isScheme, role: role, target: bundleID).prompted
 			}
 			// Re-read every role: "All Roles" changes them all, and a declined prompt changes none.
@@ -232,6 +233,11 @@ private struct AppDetail: View {
 		Task {
 			let result = await Catalog.setDefault(bundleID, for: claim.id, isScheme: claim.isScheme)
 			let applied = model.report(result, app: bundleID, content: claim.id)
+			var prompted = false
+			if applied {
+				// Same as for a single role above: a read can trail a change macOS has reported.
+				prompted = await Catalog.settledDefault(for: claim.id, isScheme: claim.isScheme, target: bundleID).prompted
+			}
 			let handlers = await Task.detached(priority: .userInitiated) {
 				Catalog.handlers(for: claim.id, isScheme: claim.isScheme)
 			}.value
@@ -242,7 +248,7 @@ private struct AppDetail: View {
 			}
 			pending.remove(claim.key)
 			if !claim.isScheme { model.defaultChanged(forType: claim.id, to: handlers.current) }
-			if applied, !handlers.isCurrent(bundleID) {
+			if applied, !prompted, !handlers.isCurrent(bundleID) {
 				model.errorMessage = "Launch Services did not apply the change for \(claim.id)."
 			}
 		}

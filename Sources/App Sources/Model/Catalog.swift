@@ -202,7 +202,8 @@ enum Catalog {
 
 	/**
 	Sets the default handler and waits for macOS to say it is done, which can mean waiting for the user to answer a
-	confirmation. Declining arrives as `.canceled`.
+	confirmation. Canceling it arrives as `.canceled`. A change of one role alone is made by a function that answers at once,
+	so `settledDefault` is what waits for that.
 	*/
 	static func setDefault(_ bundleID: String, for content: String, isScheme: Bool, role: Role = .all) async -> Result<Void, LSWrappers.LSErrors> {
 		let app: LSWrappers.ResolvedApp
@@ -225,9 +226,10 @@ enum Catalog {
 	}
 
 	/**
-	Waits until a default change that only the per-role functions made has really taken effect, and returns the handler
-	actually in place. Those functions return before macOS has applied the change, and give no way to find out when it
-	has, or whether the user declined a confirmation. Changes that name no role do not need this: `setDefault` reports them.
+	Waits until a default change has really taken effect, and returns the handler actually in place. The per-role functions
+	return before macOS has applied the change, and give no way to find out when it has, or whether the user canceled a
+	confirmation. `setDefault` does wait for a change of all roles, but a read can still trail it by a moment. Either way this
+	returns at once when the handler is already the target.
 	*/
 	static func settledDefault(for content: String, isScheme: Bool, role: Role = .all, target: String) async -> (handler: String?, prompted: Bool) {
 		func current() -> String? {
