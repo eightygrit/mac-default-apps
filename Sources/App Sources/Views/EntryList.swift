@@ -12,11 +12,11 @@ import SwiftUI
 /**
 Sidebar list backed by NSOutlineView. The File Types list holds thousands of rows; an outline view only
 builds the visible ones and reloads in one pass, where SwiftUI's List diffs every row on each change.
-Group headers toggle on click (Option-click toggles every group); collapsed state lives in PaneModel.
+Group headers toggle on click (Option-click toggles every group); collapsed state lives in AppModel.
 */
 @MainActor
 struct EntryList: NSViewRepresentable {
-	@ObservedObject var model: PaneModel
+	@ObservedObject var model: AppModel
 
 	func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -65,7 +65,7 @@ struct EntryList: NSViewRepresentable {
 		}
 
 		weak var outline: NSOutlineView?
-		private var model: PaneModel?
+		private var model: AppModel?
 		private var version = -1
 		private var groups: [Group] = []
 		/** Rows shown at the root when the list is not grouped. */
@@ -74,7 +74,7 @@ struct EntryList: NSViewRepresentable {
 		private var isSyncing = false
 		private var shownSelection: String?
 
-		func update(_ model: PaneModel) {
+		func update(_ model: AppModel) {
 			self.model = model
 			guard let outline else { return }
 			isSyncing = true
@@ -147,7 +147,7 @@ struct EntryList: NSViewRepresentable {
 
 		func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool { item is Row }
 
-		/** Expansion is driven by PaneModel through clicks on the header, never by the outline view itself. */
+		/** Expansion is driven by AppModel through clicks on the header, never by the outline view itself. */
 		func outlineView(_ outlineView: NSOutlineView, shouldShowOutlineCellForItem item: Any) -> Bool { false }
 
 		func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {

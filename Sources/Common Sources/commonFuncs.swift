@@ -184,24 +184,10 @@ extension Dictionary
 }
 
 
-/** Determines whether the app is running in Prefpane or CLI form by checking the Main Bundle Identifier. */
+/** Determines whether the app is running in app or CLI form by checking the Main Bundle Identifier. */
 func areWeCLI() -> Bool {
 	return (Bundle.main.bundleIdentifier == nil)
 }
-
-/** Determines the URL for the location of the SwiftDefaultApps prefpane, is any. */
-func prefPaneLocation() -> URL? {
-	if let bundle = Bundle(identifier:"cl.fail.lordkamina.SwiftDefaultApps") {
-		return bundle.bundleURL	
-	}
-	let prefpaneSearchPaths: [URL] = FileManager.default.urls(for: FileManager.SearchPathDirectory.preferencePanesDirectory, in: FileManager.SearchPathDomainMask.allDomainsMask)
-	for path in prefpaneSearchPaths {
-		if (FileManager.default.isExecutableFile(atPath: path.appendingPathComponent("SwiftDefaultApps.prefpane").absoluteURL.path) == true) {
-			return path.appendingPathComponent("SwiftDefaultApps.prefpane").absoluteURL
-		}
-	}	
-	return nil
-} 
 
 /** 
 Display a modal alert
@@ -213,7 +199,7 @@ func displayAlert(error: OSStatus = Int32.min, arg1: String?, arg2: String?) thr
 	if (error != 0 && (arg1 == nil || arg2 == nil)) { throw ("Arguments cannot be nil when displaying an error.") }
 	if (!areWeCLI()) {
 		let alert = NSAlert()
-		alert.icon = NSWorkspace.shared.icon(forFile: Bundle(identifier: "cl.fail.lordkamina.SwiftDefaultApps")!.bundlePath)
+		alert.icon = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
 		alert.addButton(withTitle: "OK")
 		if (error != Int32.min) {
 			alert.informativeText = LSWrappers.LSErrors(value: error).print(argument: (app: arg1, content: arg2))

@@ -24,9 +24,9 @@ struct EntrySection: Identifiable {
 	let entries: [Entry]
 }
 
-/** UI state of the pane: the loaded lists, the search query and the selection of each category. */
+/** UI state of the app: the loaded lists, the search query and the selection of each category. */
 @MainActor
-final class PaneModel: ObservableObject {
+final class AppModel: ObservableObject {
 	@Published var category: Category = .internet {
 		didSet { load(category); refresh() }
 	}

@@ -13,7 +13,7 @@ import UniformTypeIdentifiers
 /** Shows the detail of the selected entry; each entry gets fresh state through `.id`. */
 @MainActor
 struct DetailView: View {
-	@EnvironmentObject private var model: PaneModel
+	@EnvironmentObject private var model: AppModel
 
 	var body: some View {
 		if let entry = model.selectedEntry {
@@ -38,7 +38,7 @@ struct DetailView: View {
 @MainActor
 private struct ContentDetail: View {
 	let entry: Entry
-	@EnvironmentObject private var model: PaneModel
+	@EnvironmentObject private var model: AppModel
 	@State private var states: [Role: HandlerState] = [:]
 	/** Roles with a change awaiting confirmation. */
 	@State private var pending: Set<Role> = []
@@ -172,7 +172,7 @@ private struct Claim: Identifiable {
 private struct AppDetail: View {
 	let entry: Entry
 	let declarations: AppDeclarations
-	@EnvironmentObject private var model: PaneModel
+	@EnvironmentObject private var model: AppModel
 	@State private var claims: [Claim]?
 	/** Claims with a change awaiting confirmation. */
 	@State private var pending: Set<String> = []

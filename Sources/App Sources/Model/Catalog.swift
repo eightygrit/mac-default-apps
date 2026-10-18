@@ -10,7 +10,7 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/** The four lists the pane can browse. */
+/** The four lists the app can browse. */
 enum Category: String, CaseIterable, Identifiable {
 	case internet = "Internet"
 	case schemes = "URL Schemes"

@@ -9,41 +9,30 @@
 
 import SwiftUI
 
-/** Root view. Every region stretches with its container, so the pane follows whatever size it is given. */
+/** Root view. Every region stretches with its container. */
 @MainActor
-struct PaneView: View {
-	@EnvironmentObject private var model: PaneModel
-	@State private var showsAbout = false
+struct ContentView: View {
+	@EnvironmentObject private var model: AppModel
 
 	var body: some View {
-		VStack(spacing: 0) {
-			HStack {
+		HStack(spacing: 0) {
+			SidebarView()
+				.frame(width: 240)
+			Divider()
+			DetailView()
+				.frame(maxWidth: .infinity, maxHeight: .infinity)
+		}
+		.frame(maxWidth: .infinity, maxHeight: .infinity)
+		.toolbar {
+			ToolbarItem(placement: .principal) {
 				Picker("Category", selection: $model.category) {
 					ForEach(Category.allCases) { Text($0.rawValue).tag($0) }
 				}
 				.pickerStyle(.segmented)
 				.labelsHidden()
 				.fixedSize()
-				Spacer()
-				Button { showsAbout.toggle() } label: { Image(systemName: "info.circle") }
-					.buttonStyle(.borderless)
-					.help("About SwiftDefaultApps")
-					.popover(isPresented: $showsAbout, arrowEdge: .bottom) { AboutView() }
-			}
-			.padding(.horizontal, 12)
-			.padding(.vertical, 10)
-
-			Divider()
-
-			HStack(spacing: 0) {
-				SidebarView()
-					.frame(width: 240)
-				Divider()
-				DetailView()
-					.frame(maxWidth: .infinity, maxHeight: .infinity)
 			}
 		}
-		.frame(maxWidth: .infinity, maxHeight: .infinity)
 		.alert("Couldn't Change the Default Application", isPresented: Binding(
 			get: { model.errorMessage != nil },
 			set: { if !$0 { model.errorMessage = nil } }
@@ -58,7 +47,7 @@ struct PaneView: View {
 /** Search field, the filtered list, and the custom-scheme field on the URL Schemes tab. */
 @MainActor
 private struct SidebarView: View {
-	@EnvironmentObject private var model: PaneModel
+	@EnvironmentObject private var model: AppModel
 	@State private var newScheme = ""
 
 	var body: some View {
@@ -104,23 +93,5 @@ private struct SidebarView: View {
 	private func addScheme() {
 		model.addScheme(newScheme)
 		newScheme = ""
-	}
-}
-
-@MainActor
-private struct AboutView: View {
-	private var version: String {
-		let info = Bundle(for: PaneModel.self).infoDictionary ?? [:]
-		return "\(info["CFBundleShortVersionString"] as? String ?? "?") (\(info["CFBundleVersion"] as? String ?? "?"))"
-	}
-
-	var body: some View {
-		VStack(spacing: 6) {
-			Text("SwiftDefaultApps").font(.headline)
-			Text("Version \(version)").foregroundStyle(.secondary)
-			Text("by Gregorio Litenstein")
-			Link("github.com/Lord-Kamina/SwiftDefaultApps", destination: URL(string: "https://github.com/Lord-Kamina/SwiftDefaultApps")!)
-		}
-		.padding(16)
 	}
 }
