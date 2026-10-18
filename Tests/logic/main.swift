@@ -157,13 +157,15 @@ func refusal(_ operation: (@escaping (Result<Void, E>) -> Void) -> Void) -> E? {
     guard reports.count == 1, case .failure(let error) = reports[0] else { return nil }
     return error
 }
-// Every request below names an application that does not exist or a UTI that does not exist, so nothing can be written even if a check is skipped.
+// Every request below names an application that does not exist, or a UTI that does not exist, or, where a real UTI is needed so that the
+// application is what gets refused, one that nobody depends on: were a check ever skipped, nothing of value could be changed.
+let harmlessUTI = "public.xbitmap-image"
 let missingApp = LSWrappers.ResolvedApp(url: URL(fileURLWithPath: "/nonexistent/Foo.app"), bundleID: "org.nonexistent.app")
 check("scheme with a space", refusal { LSWrappers.Schemes.setDefaultHandler("bad scheme", missingApp, completionHandler: $0) }, .invalidScheme)
 check("scheme starting with a digit", refusal { LSWrappers.Schemes.setDefaultHandler("1bad", missingApp, completionHandler: $0) }, .invalidScheme)
 check("scheme handler that is not installed", refusal { LSWrappers.Schemes.setDefaultHandler("nosuchscheme", missingApp, completionHandler: $0) }, .appNotFound)
-check("UTI handler that is not installed", refusal { LSWrappers.UTIs.setDefaultHandler("public.html", missingApp, .all, completionHandler: $0) }, .appNotFound)
-check("UTI handler that is not installed, for one role", refusal { LSWrappers.UTIs.setDefaultHandler("public.html", missingApp, .viewer, completionHandler: $0) }, .appNotFound)
+check("UTI handler that is not installed", refusal { LSWrappers.UTIs.setDefaultHandler(harmlessUTI, missingApp, .all, completionHandler: $0) }, .appNotFound)
+check("UTI handler that is not installed, for one role", refusal { LSWrappers.UTIs.setDefaultHandler(harmlessUTI, missingApp, .viewer, completionHandler: $0) }, .appNotFound)
 check("an application that is not installed is not registered on demand", LSWrappers.ensureRegistered(missingApp), false)
 if case .success(let textEdit) = LSWrappers.resolveApp("com.apple.TextEdit") {
     check("a UTI nobody declared, for an installed application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, completionHandler: $0) }, .unknownUTI)
@@ -204,8 +206,8 @@ var lateReport: ((Result<Void, E>) -> Void)?
 let expired = timed { LSWrappers.awaitCompletion(timeout: 0.3) { lateReport = $0 } }
 check("no report in time", expired.code, E.timedOut.rawValue)
 check("the time is up when it says", expired.seconds >= 0.3 && expired.seconds < 2, true)
+// A report that comes after the time is up changes nothing anyone can see, since the caller already has its answer. It only has to return.
 lateReport?(.success(()))
-check("a report after the time is up is ignored without harm", expired.code, E.timedOut.rawValue)
 check("an operation that never reports and has no time", code(LSWrappers.awaitCompletion(timeout: 0) { _ in }), E.timedOut.rawValue)
 check("no error is success", code(Result(error: nil)), 0)
 check("an NSError is mapped", code(Result(error: NSError(domain: NSOSStatusErrorDomain, code: -128))), E.canceled.rawValue)
@@ -269,7 +271,10 @@ let textEditURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "co
 let calculatorURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.calculator")!
 check("bundle identifiers, repeated applications counted once", LSWrappers.copyHandlers(from: [textEditURL, calculatorURL, textEditURL], asPath: false), ["com.apple.TextEdit", "com.apple.calculator"])
 check("paths keep the order given", LSWrappers.copyHandlers(from: [calculatorURL, textEditURL], asPath: true), [calculatorURL.path, textEditURL.path])
-check("a path comes from the bundle identifier, not the URL given", LSWrappers.copyHandlers(from: [URL(fileURLWithPath: textEditURL.path + "/")], asPath: true), [textEditURL.path])
+let applicationsFolder = textEditURL.deletingLastPathComponent()
+let roundabout = URL(fileURLWithPath: applicationsFolder.path + "/../" + applicationsFolder.lastPathComponent + "/" + textEditURL.lastPathComponent)
+check("the URL used below really spells the path differently", roundabout.path != textEditURL.path, true)
+check("a path comes from the bundle identifier, not the URL given", LSWrappers.copyHandlers(from: [roundabout], asPath: true), [textEditURL.path])
 check("nothing in, nil out", LSWrappers.copyHandlers(from: [], asPath: true), nil)
 check("a folder that is not an application is skipped", LSWrappers.copyHandlers(from: [URL(fileURLWithPath: "/tmp")], asPath: false), nil)
 
@@ -310,8 +315,27 @@ let htmlHandlers = LSWrappers.UTIs.copyAllHandlers("public.html", asPath: false)
 check("no application is listed twice for a type", Set(htmlHandlers.map { $0.lowercased() }).count, htmlHandlers.count)
 check("a role-less default is one of the role-less handlers", LSWrappers.UTIs.copyAllHandlers("public.html", asPath: false)?.contains(LSWrappers.UTIs.copyDefaultHandler("public.html", asPath: false) ?? ""), true)
 check("an unknown UTI has no role-less default", LSWrappers.UTIs.copyDefaultHandler("no.such.uti"), nil)
-check("an explicit role is answered by the legacy function", LSWrappers.UTIs.copyDefaultHandler("public.html", inRoles: .viewer, asPath: false), LSLegacyRoles.copyDefaultHandlerID("public.html", .viewer))
-check("viewer and editor together are answered by the legacy function", LSWrappers.UTIs.copyDefaultHandler("public.html", inRoles: [.viewer, .editor], asPath: false), LSLegacyRoles.copyDefaultHandlerID("public.html", [.viewer, .editor]))
+// Every role of public.html is one application on most Macs, so it cannot tell the two paths apart. Some types open with an
+// application other than their Viewer (Books, not Preview, is the Viewer of a PDF): one such type, found at run time, shows that
+// a narrower mask is answered by the legacy function and not by NSWorkspace.
+func opensWith(_ identifier: String) -> String? {
+    guard let type = UTType(identifier), let url = NSWorkspace.shared.urlForApplication(toOpen: type) else { return nil }
+    return Bundle(url: url)?.bundleIdentifier?.lowercased()
+}
+let narrowerMasks: [(name: String, roles: LSRolesMask)] = [("viewer", .viewer), ("viewer and editor together", [.viewer, .editor])]
+for (name, roles) in narrowerMasks {
+    let found = (declaredUTIs ?? []).sorted().first { identifier in
+        guard let legacy = LSLegacyRoles.copyDefaultHandlerID(identifier, roles)?.lowercased(), let opens = opensWith(identifier) else { return false }
+        return legacy != opens
+    }
+    guard let identifier = found else {
+        print("skip  \(name): no type has a default for it other than what opens the file, so the routing cannot be told apart here")
+        continue
+    }
+    let answer = LSWrappers.UTIs.copyDefaultHandler(identifier, inRoles: roles, asPath: false)?.lowercased()
+    check("\(name) is answered by the legacy function [\(identifier)]", answer, LSLegacyRoles.copyDefaultHandlerID(identifier, roles)?.lowercased())
+    check("\(name) is not what opens the file [\(identifier)]", answer != opensWith(identifier), true)
+}
 check("the handlers of one role are the legacy function's", LSWrappers.UTIs.copyAllHandlers("com.adobe.pdf", inRoles: .editor, asPath: false), LSLegacyRoles.copyAllHandlerIDs("com.adobe.pdf", .editor))
 
 // MARK: - Per-role handlers (the legacy functions, looked up with dlsym)
