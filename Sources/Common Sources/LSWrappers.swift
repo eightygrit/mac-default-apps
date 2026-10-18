@@ -201,11 +201,17 @@ class LSWrappers {
 	*/
 	class Schemes {
 		/**
-		Traverses Info dictionaries of possible handlers for an URI Scheme and gets a display name, if available.
+		The URLs that stand for a scheme when `NSWorkspace` is asked about it: "mailto:" first and then "file:///", the only shape it accepts for "file".
+		*/
+		private static func copyURLs (forScheme inScheme: String) -> [URL] {
+			return ["\(inScheme):", "\(inScheme):///"].compactMap { URL(string: $0) }
+		}
+		/**
+		Traverses Info dictionaries of possible handlers for an URI Scheme and copies a display name, if available.
 		- Parameter inScheme: An URI Scheme.
 		- Returns: A display name, or `nil` if none was found.
 		*/
-		static func getNameForScheme (_ inScheme: String) -> String? {
+		static func copyNameForScheme (_ inScheme: String) -> String? {
 			var schemeName: String? = nil
 			if let handlers = Schemes.copyAllHandlers(inScheme) {
 				
@@ -243,18 +249,10 @@ class LSWrappers {
 		- Returns: The Bundle identifier or POSIX path of an application, or nil if no valid handler was found.
 		*/
 		static func copyDefaultHandler (_ inScheme:String, asPath: Bool = true) -> String? {
-			
-			if let value = LSCopyDefaultHandlerForURLScheme(inScheme as CFString) {
-				let handlerID = value.takeRetainedValue() as String
-				if (asPath == true) {
-					if let handlerURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: handlerID) {
-						return handlerURL.path
-					}
-					else { return nil }
-				}
-				else { return handlerID }
+			for url in copyURLs(forScheme: inScheme) {
+				if let app = NSWorkspace.shared.urlForApplication(toOpen: url) { return copyHandlers(from: [app], asPath: asPath)?.first }
 			}
-			else { return nil }
+			return nil
 		}
 		/**
 		Creates a list of all currently registered handlers for a given URI Scheme.
@@ -262,21 +260,11 @@ class LSWrappers {
 		- Returns: An array of strings corresponding to the Bundle identifiers or POSIX paths of all currently registered handlers, or nil of none were found.
 		*/
 		static func copyAllHandlers (_ inScheme:String, asPath: Bool = true) -> Array<String>? {
-			
-			var handlers: Array<String> = []
-			if let value = LSCopyAllHandlersForURLScheme(inScheme as CFString) {
-				let handlerIDs = (value.takeRetainedValue() as! Array<String>)
-				if (asPath == true) {
-					for handlerID in handlerIDs {
-						if let handlerURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: handlerID) {
-							handlers.append(handlerURL.path)
-						}
-					}
-				}
-				else { return handlerIDs }
+			for url in copyURLs(forScheme: inScheme) {
+				let apps = NSWorkspace.shared.urlsForApplications(toOpen: url)
+				if !apps.isEmpty { return copyHandlers(from: apps, asPath: asPath) }
 			}
-			else { return nil }
-			return (handlers.isEmpty ? nil : handlers)
+			return nil
 		}
 		/**
 		Changes the default handler for a given URI Scheme.
@@ -299,6 +287,21 @@ class LSWrappers {
 		}
 	}
 	
+	/**
+	Turns the applications Launch Services answered with into the strings callers ask for.
+	- Parameter urls: File-system URLs of applications, best match first.
+	- Parameter asPath: `true` for POSIX paths, `false` for bundle identifiers.
+	- Returns: One string per bundle identifier, in the order given, or nil if there is none. Several copies of one application (the same bundle identifier in more than one place) count once, and the copy Launch Services ranks first for that identifier stands for them all.
+	*/
+	static func copyHandlers (from urls: [URL], asPath: Bool) -> [String]? {
+		var seen = Set<String>()
+		var handlers: [String] = []
+		for url in urls {
+			guard let bundleID = Bundle(url: url)?.bundleIdentifier, seen.insert(bundleID.lowercased()).inserted else { continue }
+			handlers.append(asPath ? (NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) ?? url).path : bundleID)
+		}
+		return handlers.isEmpty ? nil : handlers
+	}
 	/**
 	Creates a list of all currently registered applications.
 	- Returns: An array of strings corresponding to the paths of all applications currently registered with Launch Services, or nil if the system does not provide the list of applications.

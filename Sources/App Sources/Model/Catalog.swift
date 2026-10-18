@@ -114,7 +114,7 @@ enum Catalog {
 		case .schemes:
 			guard let schemes = LSWrappers.Schemes.copySchemesAndHandlers()?.keys else { return nil }
 			return concurrentMap(schemes.filter { $0 != "*" }) { scheme in
-				Entry(id: scheme, kind: .scheme, title: scheme, subtitle: LSWrappers.Schemes.getNameForScheme(scheme) ?? "")
+				Entry(id: scheme, kind: .scheme, title: scheme, subtitle: LSWrappers.Schemes.copyNameForScheme(scheme) ?? "")
 			}.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
 		case .types:
 			guard let identifiers = LSPrivate.copyDeclaredTypeIdentifiers() else { return nil }

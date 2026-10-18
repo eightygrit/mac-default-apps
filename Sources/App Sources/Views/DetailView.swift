@@ -248,7 +248,7 @@ private struct AppDetail: View {
 	private nonisolated static func loadClaims(_ bundleID: String, _ declarations: AppDeclarations) -> [Claim] {
 		let schemes = Catalog.concurrentMap(declarations.schemes) { scheme -> Claim in
 			let handlers = Catalog.handlers(for: scheme, isScheme: true)
-			return Claim(id: scheme, title: "\(scheme):", subtitle: LSWrappers.Schemes.getNameForScheme(scheme) ?? "",
+			return Claim(id: scheme, title: "\(scheme):", subtitle: LSWrappers.Schemes.copyNameForScheme(scheme) ?? "",
 						 isScheme: true, handlers: handlers, isDefault: handlers.isCurrent(bundleID))
 		}
 		let types = Catalog.concurrentMap(declarations.types) { identifier -> Claim in

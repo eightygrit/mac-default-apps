@@ -152,6 +152,33 @@ check("http is a registered scheme", schemeList?.schemes.contains("http"), true)
 check("copySchemesAndHandlers maps http to an application", LSWrappers.Schemes.copySchemesAndHandlers()?["http"]?.hasSuffix(".app"), true)
 check("copyAllApps returns paths", LSWrappers.copyAllApps()?.first?.hasPrefix("/"), true)
 
+// MARK: - Handlers as the callers want them (NSWorkspace answers with application URLs)
+
+section("copyHandlers")
+let textEditURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.TextEdit")!
+let calculatorURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.calculator")!
+check("bundle identifiers, repeated applications counted once", LSWrappers.copyHandlers(from: [textEditURL, calculatorURL, textEditURL], asPath: false), ["com.apple.TextEdit", "com.apple.calculator"])
+check("paths keep the order given", LSWrappers.copyHandlers(from: [calculatorURL, textEditURL], asPath: true), [calculatorURL.path, textEditURL.path])
+check("a path comes from the bundle identifier, not the URL given", LSWrappers.copyHandlers(from: [URL(fileURLWithPath: textEditURL.path + "/")], asPath: true), [textEditURL.path])
+check("nothing in, nil out", LSWrappers.copyHandlers(from: [], asPath: true), nil)
+check("a folder that is not an application is skipped", LSWrappers.copyHandlers(from: [URL(fileURLWithPath: "/tmp")], asPath: false), nil)
+
+// MARK: - URI Scheme reads
+
+section("URI Scheme reads")
+check("mailto has a default handler", LSWrappers.Schemes.copyDefaultHandler("mailto")?.hasSuffix(".app"), true)
+check("http has a default handler as a bundle identifier", LSWrappers.Schemes.copyDefaultHandler("http", asPath: false)?.contains("."), true)
+check("the default handler is one of all the handlers", LSWrappers.Schemes.copyAllHandlers("http", asPath: false)?.map { $0.lowercased() }.contains(LSWrappers.Schemes.copyDefaultHandler("http", asPath: false)?.lowercased() ?? ""), true)
+let httpHandlers = LSWrappers.Schemes.copyAllHandlers("http", asPath: false) ?? []
+check("no application is listed twice", Set(httpHandlers.map { $0.lowercased() }).count, httpHandlers.count)
+check("a scheme is not case-sensitive", LSWrappers.Schemes.copyDefaultHandler("HTTP"), LSWrappers.Schemes.copyDefaultHandler("http"))
+check("file is answered, although NSWorkspace only takes file:///", LSWrappers.Schemes.copyDefaultHandler("file"), "/System/Library/CoreServices/Finder.app")
+check("Finder is among the handlers of file", LSWrappers.Schemes.copyAllHandlers("file")?.contains("/System/Library/CoreServices/Finder.app"), true)
+check("an unknown scheme has no default handler", LSWrappers.Schemes.copyDefaultHandler("nosuchscheme"), nil)
+check("an unknown scheme has no handlers", LSWrappers.Schemes.copyAllHandlers("nosuchscheme"), nil)
+check("something that is not a scheme has no handlers", LSWrappers.Schemes.copyAllHandlers("bad scheme"), nil)
+check("an unknown scheme has no name", LSWrappers.Schemes.copyNameForScheme("nosuchscheme"), nil)
+
 // MARK: - Per-role handlers (the legacy functions, looked up with dlsym)
 
 section("per-role handlers")
