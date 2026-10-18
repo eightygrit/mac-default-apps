@@ -150,7 +150,7 @@ extension Bundle {
 	- Parameter outError: Populated with an error-code if the bundle does not correspond to a valid package.
 	- Returns: The four-letter code specifying the bundle's package type, or `nil` if an error is encountered.
 	*/
-	func getType (outError: inout OSStatus) -> String? {
+	func copyType (outError: inout OSStatus) -> String? {
 		if let info = self.infoDictionary {
 			if let type = info["CFBundlePackageType"] {
 				return String(describing: type)

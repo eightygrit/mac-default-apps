@@ -420,7 +420,7 @@ class LSWrappers {
 		var errCode = OSStatus()
 		let filemanager = FileManager.default
 		func app(from bundle: Bundle, allowing types: Set<String>) -> Result<ResolvedApp, LSErrors> {
-			guard let type = bundle.getType(outError: &errCode) else { return .failure(LSErrors(value: errCode)) }
+			guard let type = bundle.copyType(outError: &errCode) else { return .failure(LSErrors(value: errCode)) }
 			guard types.contains(type), let bundleID = bundle.bundleIdentifier else { return .failure(.notAnApp) }
 			return .success(ResolvedApp(url: bundle.bundleURL, bundleID: bundleID))
 		}
