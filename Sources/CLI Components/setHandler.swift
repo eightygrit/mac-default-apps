@@ -95,8 +95,7 @@ class SetCommand: OptionCommand {
 			statusCode = kLSUnknownErr
 			break
 		}
-		do {
-			try displayAlert(error: statusCode, arg1: app?.bundleID ?? inApplication, arg2: self.contentType ?? self.kind)
-		} catch { print(error) }
+		let result: Result<Void, LSWrappers.LSErrors> = (statusCode == 0) ? .success(()) : .failure(LSWrappers.LSErrors(value: statusCode))
+		displayAlert(result, app: app?.bundleID ?? inApplication, content: self.contentType ?? self.kind)
 	}
 }

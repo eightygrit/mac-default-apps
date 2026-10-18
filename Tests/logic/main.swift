@@ -26,7 +26,7 @@ typealias E = LSWrappers.LSErrors
 let statusTable: [(OSStatus, E)] = [
     (-67857, .invalidBundle), (-30774, .invalidScheme), (-10825, .incompatibleSys), (-10822, .serverErr),
     (-10814, .appNotFound), (-10811, .notAnApp), (-10810, .defaultErr), (-10660, .deletedApp),
-    (262, .invalidFileURL), (0, .noError),
+    (262, .invalidFileURL), (-128, .canceled), (-54, .permissionDenied), (-1712, .timedOut), (0, .noError),
 ]
 for (status, error) in statusTable {
     check("LSErrors(value: \(status))", E(value: status), error)
@@ -54,8 +54,39 @@ check("message: invalidBundle", E.invalidBundle.print(argument: (app: "Foo", con
       "SwiftDefaultApps ERROR -67857: Foo is not a valid Package.")
 check("message: defaultErr", E.defaultErr.print(argument: (app: nil, content: nil)),
       "SwiftDefaultApps ERROR -10810: An unknown error has occurred.")
+check("message: canceled", E.canceled.print(argument: (app: "Foo", content: "public.json")),
+      "SwiftDefaultApps ERROR -128: Changing the default handler for public.json was canceled.")
+check("message: permissionDenied", E.permissionDenied.print(argument: (app: "Foo", content: "public.json")),
+      "SwiftDefaultApps ERROR -54: macOS did not allow changing the default handler for public.json.")
+check("message: timedOut", E.timedOut.print(argument: (app: "Foo", content: "public.json")),
+      "SwiftDefaultApps ERROR -1712: Timed out waiting for the change of the default handler for public.json.")
 check("message: noError", E.noError.print(argument: (app: "Foo", content: nil)),
       "SwiftDefaultApps SUCCESS: Default handler has succesfully changed to Foo")
+// A missing argument used to be force-unwrapped, which crashed.
+for error in [E.notAnApp, .appNotFound, .invalidScheme, .invalidFileURL, .deletedApp, .invalidBundle, .incompatibleSys, .canceled, .permissionDenied, .timedOut, .noError] {
+    check("message without arguments: \(error)", error.print(argument: (app: nil, content: nil)).hasPrefix(error == .noError ? "SwiftDefaultApps SUCCESS: " : "SwiftDefaultApps ERROR \(error.rawValue): "), true)
+}
+
+// MARK: - LSErrors from the errors NSWorkspace reports
+
+section("LSErrors from an Error")
+func cocoa(_ code: Int, underlying: NSError? = nil) -> NSError {
+    NSError(domain: NSCocoaErrorDomain, code: code, userInfo: underlying.map { [NSUnderlyingErrorKey: $0] } ?? [:])
+}
+func osStatus(_ code: Int) -> NSError { NSError(domain: NSOSStatusErrorDomain, code: code) }
+check("NSUserCancelledError", E(cocoa(NSUserCancelledError)), .canceled)
+check("OSStatus -128", E(osStatus(-128)), .canceled)
+check("OSStatus -54", E(osStatus(-54)), .permissionDenied)
+check("OSStatus of one of our own cases", E(osStatus(-10814)), .appNotFound)
+check("a declined prompt under a file error", E(cocoa(256, underlying: osStatus(-128))), .canceled)
+check("a denial under a file error", E(cocoa(256, underlying: osStatus(-54))), .permissionDenied)
+check("two levels down", E(cocoa(256, underlying: cocoa(4, underlying: osStatus(-128)))), .canceled)
+check("a file error alone", E(cocoa(256)), .defaultErr)
+check("an unknown OSStatus", E(osStatus(-43)), .defaultErr)
+check("OSStatus 0 is not an error", E(osStatus(0)), .defaultErr)
+check("another domain with a familiar code", E(NSError(domain: "org.example", code: -128)), .defaultErr)
+check("one of ours passes through", E(E.timedOut), .timedOut)
+check("one of ours passes through as a plain Error", E(E.deletedApp as Error), .deletedApp)
 
 // MARK: - Which application did the user mean? (stock Apple applications only, so the table holds on any Mac)
 

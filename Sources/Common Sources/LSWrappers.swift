@@ -26,6 +26,9 @@ class LSWrappers {
 	- deletedApp: An application bundle was found, but it is currently in the Trash.
 	- defaultErr: Unknown error, for cases not covered above. 
 	- invalidFileURL: Trying to locate a file with a scheme different from file://
+	- canceled: The user declined the confirmation macOS asks for before it changes a default handler.
+	- permissionDenied: The system, or the sandbox the program runs in, did not allow the change.
+	- timedOut: The change was not confirmed in time.
 	- noError: No error occured. 
 	*/
 	internal enum LSErrors:OSStatus, Error {
@@ -38,6 +41,9 @@ class LSWrappers {
 		case defaultErr = -10810
 		case deletedApp = -10660
 		case invalidFileURL = 262
+		case canceled = -128
+		case permissionDenied = -54
+		case timedOut = -1712
 		
 		case noError = 0
 		
@@ -52,11 +58,29 @@ class LSWrappers {
 			case -10660: self = .deletedApp
 			case -10810: self = .defaultErr
 			case 262: self = .invalidFileURL
+			case -128: self = .canceled
+			case -54: self = .permissionDenied
+			case -1712: self = .timedOut
 				
 			case 0: self = .noError
 			default: self = .defaultErr
 			}
 			
+		}
+		/**
+		Maps an error reported by `NSWorkspace` to the closest case. A declined confirmation arrives as `NSUserCancelledError` or as an
+		`NSOSStatusErrorDomain` error, and the reason for a failure can sit a level down, under `NSUnderlyingErrorKey`.
+		- Parameter error: Any error. One of ours is returned as it is; one nothing here recognizes becomes `defaultErr`.
+		*/
+		init(_ error: Error) {
+			if let known = error as? LSErrors { self = known; return }
+			var next: NSError? = error as NSError
+			while let current = next {
+				if current.domain == NSCocoaErrorDomain && current.code == NSUserCancelledError { self = .canceled; return }
+				if current.domain == NSOSStatusErrorDomain, let known = LSErrors(rawValue: OSStatus(truncatingIfNeeded: current.code)), known != .noError { self = known; return }
+				next = current.userInfo[NSUnderlyingErrorKey] as? NSError
+			}
+			self = .defaultErr
 		}
 		/**
 		Print a user-readable error message for each error code.
@@ -68,17 +92,21 @@ class LSWrappers {
 		- Returns: Human-readable error message specifying the problem, or unknown error if the problem is something not accounted for here.
 		*/
 		func print(argument: (app: String?, content: String?) = (String(),String())) -> String {
+			let app = argument.app ?? String(), content = argument.content ?? String()
 			var retValue = (self == .noError ? "SwiftDefaultApps SUCCESS: " : "SwiftDefaultApps ERROR \(self.rawValue): ")
 			switch self {
-			case .notAnApp: retValue += "\(argument.app!) is not a valid application."
-			case .appNotFound: retValue += "No application found for \(argument.app!)"
-			case .invalidScheme: retValue += "\(argument.content!) is not a valid URI Scheme."
-			case .invalidFileURL: retValue += "\(argument.app!) is not a valid filesystem URL."
-			case .deletedApp: retValue += "\(argument.app!) cannot be accessed because it is in the Trash."
+			case .notAnApp: retValue += "\(app) is not a valid application."
+			case .appNotFound: retValue += "No application found for \(app)"
+			case .invalidScheme: retValue += "\(content) is not a valid URI Scheme."
+			case .invalidFileURL: retValue += "\(app) is not a valid filesystem URL."
+			case .deletedApp: retValue += "\(app) cannot be accessed because it is in the Trash."
 			case .serverErr: retValue += "There was an error trying to communicate with the Launch Services Server."
-			case .incompatibleSys: retValue += "\(argument.app!) is not compatible with the currently installed version of macOS."
-			case .invalidBundle: retValue += "\(argument.app!) is not a valid Package."
-			case .noError: retValue += "Default handler has succesfully changed to \(argument.app!)"
+			case .incompatibleSys: retValue += "\(app) is not compatible with the currently installed version of macOS."
+			case .invalidBundle: retValue += "\(app) is not a valid Package."
+			case .canceled: retValue += "Changing the default handler for \(content) was canceled."
+			case .permissionDenied: retValue += "macOS did not allow changing the default handler for \(content)."
+			case .timedOut: retValue += "Timed out waiting for the change of the default handler for \(content)."
+			case .noError: retValue += "Default handler has succesfully changed to \(app)"
 			case .defaultErr: retValue += "An unknown error has occurred."
 			}
 			if ((self == .appNotFound || self == .deletedApp) && DoNothingApp.isNamed(argument.app)) { retValue += " (This error occurs when \(DoNothingApp.fileName) is not found.)" }
