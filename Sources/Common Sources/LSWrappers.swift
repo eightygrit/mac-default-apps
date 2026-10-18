@@ -10,10 +10,6 @@
 import AppKit
 import UniformTypeIdentifiers
 
-@_silgen_name("_LSCopySchemesAndHandlerURLs") func LSCopySchemesAndHandlerURLs(_: UnsafeMutablePointer<NSArray?>, _: UnsafeMutablePointer<NSMutableArray?>) -> OSStatus
-@_silgen_name("_LSCopyAllApplicationURLs") func LSCopyAllApplicationURLs(_: UnsafeMutablePointer<NSMutableArray?>) -> OSStatus;
-@_silgen_name("_UTCopyDeclaredTypeIdentifiers") func UTCopyDeclaredTypeIdentifiers() -> NSArray
-
 /**
 Functions wrapping varied Launch Services tasks to be re-used throughout the application.
 */
@@ -157,10 +153,11 @@ class LSWrappers {
 		}
 		/**
 		Creates a keyed dictionary of all currently-registered UTIs and their default handler. Excludes abstract entries like references to physical devices and such things we have no use for.
-		- Returns: A dictionary with UTIs as keys and bundle identifiers as values.
+		- Returns: A dictionary with UTIs as keys and bundle identifiers as values, or nil if the system does not provide the list of declared UTIs.
 		*/
-		static func copyAllUTIs () -> [String:String] {
-			let identifiers = (UTCopyDeclaredTypeIdentifiers() as! Array<String>).filter() { identifier in
+		static func copyAllUTIs () -> [String:String]? {
+			guard let declared = LSPrivate.copyDeclaredTypeIdentifiers() else { return nil }
+			let identifiers = declared.filter() { identifier in
 				guard let type = UTType(identifier) else { return false }
 				return type.conforms(to: .item) || type.conforms(to: .content)
 			} // Ignore UTIs belonging to devices and such.
@@ -229,25 +226,11 @@ class LSWrappers {
 		}
 		/**
 		Creates a list of all currently registered URI Schemes and their default handler.
-		- Returns: A dictionary with URI Schemes as keys and bundle identifiers as values.
+		- Returns: A dictionary with URI Schemes as keys and bundle identifiers as values, or nil if the system does not provide the list of schemes.
 		*/
 		static func copySchemesAndHandlers() -> [String:String]? {
-			var schemes_array: NSArray?
-			var apps_array: NSMutableArray?
-			if (LSCopySchemesAndHandlerURLs(&schemes_array, &apps_array) == 0) {
-				if let URLArray = (apps_array! as NSArray) as? [URL] {
-					if let pathsArray = convertAppURLsToPaths(URLArray) {
-						
-						let schemesHandlers = Dictionary.init (keys: schemes_array as! [String], values: pathsArray)
-						return schemesHandlers
-					}
-					else { return nil }
-					
-				}
-					
-				else { return nil }
-			}
-			else { return nil }
+			guard let result = LSPrivate.copySchemesAndHandlerURLs(), let pathsArray = convertAppURLsToPaths(result.handlers) else { return nil }
+			return Dictionary.init (keys: result.schemes, values: pathsArray)
 		}
 		/**
 		Copies the bundle identifier of the application currently registered as the default handler for a given URI Scheme.
@@ -313,20 +296,10 @@ class LSWrappers {
 	
 	/**
 	Creates a list of all currently registered applications.
-	- Returns: An array of strings corresponding to the paths of all applications currently registered with Launch Services.
+	- Returns: An array of strings corresponding to the paths of all applications currently registered with Launch Services, or nil if the system does not provide the list of applications.
 	*/
 	static func copyAllApps () -> Array<String>? {
-		var apps: NSMutableArray?
-		if (LSCopyAllApplicationURLs(&apps) == 0) {
-			if let appURLs = (apps! as NSArray) as? [URL] {
-				if let pathsArray = convertAppURLsToPaths(appURLs) {
-					return pathsArray
-				}
-				else { return nil }
-			}
-			else { return nil }
-		}
-		else { return nil }
+		return convertAppURLsToPaths(LSPrivate.copyAllApplicationURLs())
 	}
 	/**
 	Checks whether a given application is registered with Launch Services.

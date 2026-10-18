@@ -109,10 +109,26 @@ check("dots only", LSWrappers.UTIs.copyUTIForExtension("..."), nil)
 check("extensions of a UTI", LSWrappers.UTIs.copyExtensionsFor("com.adobe.pdf")?.contains("pdf"), true)
 check("a UTI without extensions", LSWrappers.UTIs.copyExtensionsFor("public.item"), nil)
 check("an unknown UTI has no extensions", LSWrappers.UTIs.copyExtensionsFor("no.such.uti"), nil)
-let everyUTI = LSWrappers.UTIs.copyAllUTIs()
+let everyUTI = LSWrappers.UTIs.copyAllUTIs() ?? [:]
 check("copyAllUTIs lists public.html", everyUTI["public.html"] != nil, true)
 check("copyAllUTIs does not list an unknown UTI", everyUTI["no.such.uti"] == nil, true)
 check("copyAllUTIs is not trivially small", everyUTI.count > 500, true)
+
+// MARK: - The private enumerations (looked up with dlsym, so a missing one is nil, never a crash)
+
+section("private enumerations")
+check("a symbol that does not exist is nil", LSPrivate.symbol("_LSNoSuchFunctionForTest", as: (@convention(c) () -> Int32).self) == nil, true)
+let declaredUTIs = LSPrivate.copyDeclaredTypeIdentifiers()
+check("declared UTIs are listed", (declaredUTIs?.count ?? 0) > 1000, true)
+check("declared UTIs include public.html", declaredUTIs?.contains("public.html"), true)
+let registeredApps = LSPrivate.copyAllApplicationURLs()
+check("applications are listed", (registeredApps?.count ?? 0) > 50, true)
+check("Finder is registered", registeredApps?.contains { $0.lastPathComponent == "Finder.app" }, true)
+let schemeList = LSPrivate.copySchemesAndHandlerURLs()
+check("schemes and handlers pair up", schemeList.map { $0.schemes.count == $0.handlers.count }, true)
+check("http is a registered scheme", schemeList?.schemes.contains("http"), true)
+check("copySchemesAndHandlers maps http to an application", LSWrappers.Schemes.copySchemesAndHandlers()?["http"]?.hasSuffix(".app"), true)
+check("copyAllApps returns paths", LSWrappers.copyAllApps()?.first?.hasPrefix("/"), true)
 
 // MARK: - Helpers in commonFuncs.swift
 

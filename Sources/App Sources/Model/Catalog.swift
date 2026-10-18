@@ -108,17 +108,18 @@ enum Catalog {
 		("rss", "RSS"), ("ftp", "FTP"), ("im", "Instant Messaging"),
 	]
 
-	static func load(_ category: Category) -> [Entry] {
+	/** The entries of a category, or nil when this version of macOS does not provide the list. */
+	static func load(_ category: Category) -> [Entry]? {
 		switch category {
 		case .internet:
 			return internetSchemes.map { Entry(id: $0.0, kind: .scheme, title: $0.1, subtitle: "\($0.0):") }
 		case .schemes:
-			let schemes = (LSWrappers.Schemes.copySchemesAndHandlers()?.keys).map(Array.init) ?? []
+			guard let schemes = LSWrappers.Schemes.copySchemesAndHandlers()?.keys else { return nil }
 			return concurrentMap(schemes.filter { $0 != "*" }) { scheme in
 				Entry(id: scheme, kind: .scheme, title: scheme, subtitle: LSWrappers.Schemes.getNameForScheme(scheme) ?? "")
 			}.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
 		case .types:
-			let identifiers = (UTCopyDeclaredTypeIdentifiers() as? [String]) ?? []
+			guard let identifiers = LSPrivate.copyDeclaredTypeIdentifiers() else { return nil }
 			return concurrentMap(identifiers) { identifier -> Entry? in
 				guard let type = UTType(identifier), type.conforms(to: .item) || type.conforms(to: .content) else { return nil }
 				let extensions = (type.tags[.filenameExtension] ?? []).map { $0.lowercased() }
@@ -127,7 +128,7 @@ enum Catalog {
 				return Entry(id: identifier, kind: .type, title: description, subtitle: subtitle, extensions: extensions, kindGroup: kindGroup(of: type))
 			}.compactMap { $0 }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
 		case .apps:
-			let paths = LSWrappers.copyAllApps() ?? []
+			guard let paths = LSWrappers.copyAllApps() else { return nil }
 			let apps = concurrentMap(paths) { path -> Entry? in
 				guard let bundle = Bundle(path: path), let bundleID = bundle.bundleIdentifier,
 					  bundleID.caseInsensitiveCompare(AppRef.doNothingID) != .orderedSame,

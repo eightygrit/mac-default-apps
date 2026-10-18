@@ -133,20 +133,21 @@ final class AppModel: ObservableObject {
 		loading.insert(category)
 		Task.detached(priority: .userInitiated) {
 			let result = Catalog.load(category)
-			let handlers = category == .types ? Catalog.defaultHandlers(forTypes: result.map(\.id)) : [:]
+			let handlers = category == .types ? Catalog.defaultHandlers(forTypes: (result ?? []).map(\.id)) : [:]
 			let apps = Dictionary(Set(handlers.values.map { $0.lowercased() }).compactMap { id in AppRef(bundleID: id).map { (id, $0) } },
 								  uniquingKeysWith: { a, _ in a })
 			await self.finishLoad(category, result, handlers: handlers, apps: apps)
 		}
 	}
 
-	private func finishLoad(_ category: Category, _ result: [Entry], handlers: [String: String], apps: [String: AppRef]) {
+	private func finishLoad(_ category: Category, _ result: [Entry]?, handlers: [String: String], apps: [String: AppRef]) {
 		if category == .types {
 			typeHandlers = handlers
 			self.apps = apps
 		}
-		entries[category] = result
+		entries[category] = result ?? []
 		loading.remove(category)
+		if result == nil { errorMessage = "The list of \(category.rawValue) is not available on this version of macOS." }
 		if category == self.category { refresh() }
 	}
 
