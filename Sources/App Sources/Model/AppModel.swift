@@ -158,15 +158,30 @@ final class AppModel: ObservableObject {
 		selection = visibleEntries[min(max(current + offset, 0), visibleEntries.count - 1)].id
 	}
 
+	/**
+	Tells the user why a change of default failed. A change the user declined is not worth a message.
+	- Returns: Whether the change succeeded.
+	*/
+	@discardableResult
+	func report(_ result: Result<Void, LSWrappers.LSErrors>, app: String, content: String) -> Bool {
+		switch result {
+		case .success: return true
+		case .failure(.canceled): return false
+		case .failure(let error):
+			errorMessage = error.print(argument: (app: app, content: content))
+			return false
+		}
+	}
+
 	/** Registers a custom URL scheme, handled by the bundled "do nothing" app until the user picks a real one. */
 	func addScheme(_ scheme: String) {
 		let scheme = scheme.trimmingCharacters(in: .whitespaces)
 		guard !scheme.isEmpty else { return }
-		if let error = Catalog.setDefault(DoNothingApp.bundleID, for: scheme, isScheme: true) {
-			errorMessage = error
-			return
+		Task {
+			let result = await Catalog.setDefault(DoNothingApp.bundleID, for: scheme, isScheme: true)
+			guard report(result, app: DoNothingApp.bundleID, content: scheme) else { return }
+			selections[.schemes] = scheme
+			load(.schemes, force: true)
 		}
-		selections[.schemes] = scheme
-		load(.schemes, force: true)
 	}
 }

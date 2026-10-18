@@ -26,6 +26,7 @@ class LSWrappers {
 	- deletedApp: An application bundle was found, but it is currently in the Trash.
 	- defaultErr: Unknown error, for cases not covered above. 
 	- invalidFileURL: Trying to locate a file with a scheme different from file://
+	- unknownUTI: The system does not know the Uniform Type Identifier.
 	- canceled: The user declined the confirmation macOS asks for before it changes a default handler.
 	- permissionDenied: The system, or the sandbox the program runs in, did not allow the change.
 	- timedOut: The change was not confirmed in time.
@@ -41,6 +42,7 @@ class LSWrappers {
 		case defaultErr = -10810
 		case deletedApp = -10660
 		case invalidFileURL = 262
+		case unknownUTI = -10815
 		case canceled = -128
 		case permissionDenied = -54
 		case timedOut = -1712
@@ -58,6 +60,7 @@ class LSWrappers {
 			case -10660: self = .deletedApp
 			case -10810: self = .defaultErr
 			case 262: self = .invalidFileURL
+			case -10815: self = .unknownUTI
 			case -128: self = .canceled
 			case -54: self = .permissionDenied
 			case -1712: self = .timedOut
@@ -103,6 +106,7 @@ class LSWrappers {
 			case .serverErr: retValue += "There was an error trying to communicate with the Launch Services Server."
 			case .incompatibleSys: retValue += "\(app) is not compatible with the currently installed version of macOS."
 			case .invalidBundle: retValue += "\(app) is not a valid Package."
+			case .unknownUTI: retValue += "\(content) is not a known UTI."
 			case .canceled: retValue += "Changing the default handler for \(content) was canceled."
 			case .permissionDenied: retValue += "macOS did not allow changing the default handler for \(content)."
 			case .timedOut: retValue += "Timed out waiting for the change of the default handler for \(content)."
@@ -215,21 +219,25 @@ class LSWrappers {
 			return Dictionary.init (keys: identifiers, values: handlers)
 		}
 		/**
-		Changes the default handler for a given UTI.
+		Changes the default handler for a given UTI. Asynchronous: macOS can ask the user to confirm first, and then answers only when the user has.
 		- See Also: `enum LSErrors` above.
 		- Parameters:
 		- inContent: A Uniform Type Identifier.
 		- inApp: An application resolved by `resolveApp(_:)`. Resolving "None" selects the dummy application, which disables the default handler for that UTI.
-		- inRoles: The specified Launch Services Role to modify. Can correspond to "Editor", "Viewer", "Shell" or "None".
-		- Returns: A status-code. `0` on success, or a value corresponding to various possible errors.
+		- inRoles: The specified Launch Services Role to modify. Can correspond to "Editor", "Viewer", "Shell" or "None". A request that names no role in particular (see `LSLegacyRoles.isRoleless(_:)`) is handed to `NSWorkspace`; a narrower one to `LSLegacyRoles`, which answers at once.
+		- completionHandler: Called exactly once, on any queue, and before this function returns if the request is refused up front (unknown UTI, application not found) or answered by `LSLegacyRoles`.
 		*/
-		static func setDefaultHandler (_ inContent: String, _ inApp: ResolvedApp, _ inRoles: LSRolesMask = LSRolesMask.all) -> OSStatus {
-			var retval: OSStatus = 0
-			if (LSWrappers.ensureRegistered(inApp) == true) {
-				retval = LSLegacyRoles.setDefaultHandler(inContent, inRoles, bundleID: inApp.bundleID)
+		static func setDefaultHandler (_ inContent: String, _ inApp: ResolvedApp, _ inRoles: LSRolesMask = .all, completionHandler: @escaping (Result<Void, LSErrors>) -> Void) {
+			if LSLegacyRoles.isRoleless(inRoles) {
+				guard let type = UTType(inContent) else { completionHandler(.failure(.unknownUTI)); return }
+				guard LSWrappers.ensureRegistered(inApp) else { completionHandler(.failure(.appNotFound)); return }
+				NSWorkspace.shared.setDefaultApplication(at: inApp.url, toOpen: type) { completionHandler(Result(error: $0)) }
 			}
-			else { retval = kLSApplicationNotFoundErr }
-			return retval
+			else {
+				guard LSWrappers.ensureRegistered(inApp) else { completionHandler(.failure(.appNotFound)); return }
+				let status = LSLegacyRoles.setDefaultHandler(inContent, inRoles, bundleID: inApp.bundleID)
+				completionHandler(status == 0 ? .success(()) : .failure(LSErrors(value: status)))
+			}
 		}
 	}
 	/**
@@ -303,26 +311,46 @@ class LSWrappers {
 			return nil
 		}
 		/**
-		Changes the default handler for a given URI Scheme.
+		Changes the default handler for a given URI Scheme. Asynchronous: macOS can ask the user to confirm first, and then answers only when the user has.
 		- See Also: `enum LSErrors` above.
 		- Parameters:
 		- inScheme: A valid URI Scheme.
 		- inApp: An application resolved by `resolveApp(_:)`. Resolving "None" selects the dummy application, which disables the default handler for that URI Scheme.
-		- Returns: A status-code. `0` on success, or a value corresponding to various possible errors.
+		- completionHandler: Called exactly once, on any queue, and before this function returns if the request is refused up front (malformed scheme, application not found).
 		*/
-		static func setDefaultHandler (_ inScheme: String, _ inApp: ResolvedApp) -> OSStatus {
-			var retval: OSStatus = kLSUnknownErr
-			if ((inScheme =~ /"\\A[a-zA-Z][a-zA-Z0-9.+-]+$") == true) {
-				if (LSWrappers.ensureRegistered(inApp) == true) {
-					retval = LSSetDefaultHandlerForURLScheme((inScheme as CFString), (inApp.bundleID as CFString))
-				}
-				else { retval = kLSApplicationNotFoundErr }
-			}
-			else { retval = Int32(kURLUnsupportedSchemeError) }
-			return retval
+		static func setDefaultHandler (_ inScheme: String, _ inApp: ResolvedApp, completionHandler: @escaping (Result<Void, LSErrors>) -> Void) {
+			guard ((inScheme =~ /"\\A[a-zA-Z][a-zA-Z0-9.+-]+$") == true) else { completionHandler(.failure(.invalidScheme)); return }
+			guard LSWrappers.ensureRegistered(inApp) else { completionHandler(.failure(.appNotFound)); return }
+			NSWorkspace.shared.setDefaultApplication(at: inApp.url, toOpenURLsWithScheme: inScheme) { completionHandler(Result(error: $0)) }
 		}
 	}
 	
+	/**
+	Waits for an operation that reports through a completion handler, for the command line, which has nothing else to do meanwhile.
+	The first report wins: a second one, or one that comes after the time is up, is ignored. The wait pumps the run loop of the
+	calling thread, so a completion handler that is dispatched to the main queue still runs when this is called from the main thread.
+	- Parameter timeout: How many seconds to wait. macOS can wait for the user to answer a confirmation, so this is long.
+	- Parameter operation: Starts the operation, given the completion handler it must call. It may call it before it returns.
+	- Returns: What the operation reported, or `timedOut`.
+	*/
+	static func awaitCompletion (timeout: TimeInterval = 120, _ operation: (@escaping (Result<Void, LSErrors>) -> Void) -> Void) -> Result<Void, LSErrors> {
+		let lock = NSLock()
+		var outcome: Result<Void, LSErrors>?
+		let reported = DispatchSemaphore(value: 0)
+		operation { result in
+			lock.lock(); defer { lock.unlock() }
+			guard outcome == nil else { return }
+			outcome = result
+			reported.signal()
+		}
+		let deadline = Date(timeIntervalSinceNow: timeout)
+		while reported.wait(timeout: .now() + .milliseconds(50)) == .timedOut && Date() < deadline {
+			RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.001))
+		}
+		lock.lock(); defer { lock.unlock() }
+		if outcome == nil { outcome = .failure(.timedOut) }
+		return outcome!
+	}
 	/**
 	Turns the applications Launch Services answered with into the strings callers ask for.
 	- Parameter urls: File-system URLs of applications, best match first.
@@ -464,5 +492,12 @@ class LSWrappers {
 		handledTypes["URIs"] = !handledUriSchemes.isEmpty ? handledUriSchemes : [:]
 		handledTypes["UTIs"] = !handledUTIs.isEmpty ? handledUTIs : [:]
 		return handledTypes
+	}
+}
+
+extension Result where Success == Void, Failure == LSWrappers.LSErrors {
+	/// The outcome `NSWorkspace` reports through the optional error of a completion handler.
+	init(error: Error?) {
+		if let error { self = .failure(LSWrappers.LSErrors(error)) } else { self = .success(()) }
 	}
 }

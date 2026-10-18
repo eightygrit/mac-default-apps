@@ -26,7 +26,7 @@ typealias E = LSWrappers.LSErrors
 let statusTable: [(OSStatus, E)] = [
     (-67857, .invalidBundle), (-30774, .invalidScheme), (-10825, .incompatibleSys), (-10822, .serverErr),
     (-10814, .appNotFound), (-10811, .notAnApp), (-10810, .defaultErr), (-10660, .deletedApp),
-    (262, .invalidFileURL), (-128, .canceled), (-54, .permissionDenied), (-1712, .timedOut), (0, .noError),
+    (262, .invalidFileURL), (-10815, .unknownUTI), (-128, .canceled), (-54, .permissionDenied), (-1712, .timedOut), (0, .noError),
 ]
 for (status, error) in statusTable {
     check("LSErrors(value: \(status))", E(value: status), error)
@@ -54,6 +54,8 @@ check("message: invalidBundle", E.invalidBundle.print(argument: (app: "Foo", con
       "SwiftDefaultApps ERROR -67857: Foo is not a valid Package.")
 check("message: defaultErr", E.defaultErr.print(argument: (app: nil, content: nil)),
       "SwiftDefaultApps ERROR -10810: An unknown error has occurred.")
+check("message: unknownUTI", E.unknownUTI.print(argument: (app: "Foo", content: "no.such.uti")),
+      "SwiftDefaultApps ERROR -10815: no.such.uti is not a known UTI.")
 check("message: canceled", E.canceled.print(argument: (app: "Foo", content: "public.json")),
       "SwiftDefaultApps ERROR -128: Changing the default handler for public.json was canceled.")
 check("message: permissionDenied", E.permissionDenied.print(argument: (app: "Foo", content: "public.json")),
@@ -63,7 +65,7 @@ check("message: timedOut", E.timedOut.print(argument: (app: "Foo", content: "pub
 check("message: noError", E.noError.print(argument: (app: "Foo", content: nil)),
       "SwiftDefaultApps SUCCESS: Default handler has succesfully changed to Foo")
 // A missing argument used to be force-unwrapped, which crashed.
-for error in [E.notAnApp, .appNotFound, .invalidScheme, .invalidFileURL, .deletedApp, .invalidBundle, .incompatibleSys, .canceled, .permissionDenied, .timedOut, .noError] {
+for error in [E.notAnApp, .appNotFound, .invalidScheme, .invalidFileURL, .unknownUTI, .deletedApp, .invalidBundle, .incompatibleSys, .canceled, .permissionDenied, .timedOut, .noError] {
     check("message without arguments: \(error)", error.print(argument: (app: nil, content: nil)).hasPrefix(error == .noError ? "SwiftDefaultApps SUCCESS: " : "SwiftDefaultApps ERROR \(error.rawValue): "), true)
 }
 
@@ -143,13 +145,60 @@ check("an unknown bundle identifier is not installed", LSWrappers.isAppInstalled
 // MARK: - Setters: requests that must be refused before anything is written
 
 section("setters refuse before writing")
-// Every request below names an application that does not exist, so nothing can be written even if a check is skipped.
+// A refusal reports at once, exactly once, and before the setter returns.
+func refusal(_ operation: (@escaping (Result<Void, E>) -> Void) -> Void) -> E? {
+    var reports: [Result<Void, E>] = []
+    operation { reports.append($0) }
+    guard reports.count == 1, case .failure(let error) = reports[0] else { return nil }
+    return error
+}
+// Every request below names an application that does not exist or a UTI that does not exist, so nothing can be written even if a check is skipped.
 let missingApp = LSWrappers.ResolvedApp(url: URL(fileURLWithPath: "/nonexistent/Foo.app"), bundleID: "org.nonexistent.app")
-check("scheme with a space", LSWrappers.Schemes.setDefaultHandler("bad scheme", missingApp), E.invalidScheme.rawValue)
-check("scheme starting with a digit", LSWrappers.Schemes.setDefaultHandler("1bad", missingApp), E.invalidScheme.rawValue)
-check("scheme handler that is not installed", LSWrappers.Schemes.setDefaultHandler("nosuchscheme", missingApp), kLSApplicationNotFoundErr)
-check("UTI handler that is not installed", LSWrappers.UTIs.setDefaultHandler("public.html", missingApp, .all), kLSApplicationNotFoundErr)
+check("scheme with a space", refusal { LSWrappers.Schemes.setDefaultHandler("bad scheme", missingApp, completionHandler: $0) }, .invalidScheme)
+check("scheme starting with a digit", refusal { LSWrappers.Schemes.setDefaultHandler("1bad", missingApp, completionHandler: $0) }, .invalidScheme)
+check("scheme handler that is not installed", refusal { LSWrappers.Schemes.setDefaultHandler("nosuchscheme", missingApp, completionHandler: $0) }, .appNotFound)
+check("UTI handler that is not installed", refusal { LSWrappers.UTIs.setDefaultHandler("public.html", missingApp, .all, completionHandler: $0) }, .appNotFound)
+check("UTI handler that is not installed, for one role", refusal { LSWrappers.UTIs.setDefaultHandler("public.html", missingApp, .viewer, completionHandler: $0) }, .appNotFound)
 check("an application that is not installed is not registered on demand", LSWrappers.ensureRegistered(missingApp), false)
+if case .success(let textEdit) = LSWrappers.resolveApp("com.apple.TextEdit") {
+    check("a UTI nobody declared, for an installed application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, completionHandler: $0) }, .unknownUTI)
+} else {
+    check("TextEdit resolves", false, true)
+}
+check("a UTI nobody declared, for a missing application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", missingApp, completionHandler: $0) }, .unknownUTI)
+
+// MARK: - Waiting for a completion handler (the command line)
+
+section("awaitCompletion")
+func code(_ result: Result<Void, E>) -> OSStatus {
+    switch result {
+    case .success: return 0
+    case .failure(let error): return error.rawValue
+    }
+}
+func timed(_ body: () -> Result<Void, E>) -> (code: OSStatus, seconds: TimeInterval) {
+    let start = Date()
+    let result = body()
+    return (code(result), Date().timeIntervalSince(start))
+}
+check("an immediate success", code(LSWrappers.awaitCompletion { $0(.success(())) }), 0)
+check("an immediate failure", code(LSWrappers.awaitCompletion { $0(.failure(.canceled)) }), E.canceled.rawValue)
+let slow = timed { LSWrappers.awaitCompletion { completion in DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { completion(.failure(.permissionDenied)) } } }
+check("a report from another queue", slow.code, E.permissionDenied.rawValue)
+check("it waited for it", slow.seconds >= 0.2 && slow.seconds < 2, true)
+let hop = timed { LSWrappers.awaitCompletion { completion in DispatchQueue.main.async { completion(.failure(.canceled)) } } }
+check("a report dispatched to the main queue still arrives", hop.code, E.canceled.rawValue)
+check("without waiting for the timeout", hop.seconds < 2, true)
+check("the first report wins", code(LSWrappers.awaitCompletion { completion in completion(.success(())); completion(.failure(.canceled)) }), 0)
+var lateReport: ((Result<Void, E>) -> Void)?
+let expired = timed { LSWrappers.awaitCompletion(timeout: 0.3) { lateReport = $0 } }
+check("no report in time", expired.code, E.timedOut.rawValue)
+check("the time is up when it says", expired.seconds >= 0.3 && expired.seconds < 2, true)
+lateReport?(.success(()))
+check("a report after the time is up is ignored without harm", expired.code, E.timedOut.rawValue)
+check("an operation that never reports and has no time", code(LSWrappers.awaitCompletion(timeout: 0) { _ in }), E.timedOut.rawValue)
+check("no error is success", code(Result(error: nil)), 0)
+check("an NSError is mapped", code(Result(error: NSError(domain: NSOSStatusErrorDomain, code: -128))), E.canceled.rawValue)
 
 // MARK: - Extension to UTI (PR #94)
 

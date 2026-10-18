@@ -93,18 +93,20 @@ private struct ContentDetail: View {
 	}
 
 	private func choose(_ bundleID: String, role: Role) {
-		if let error = Catalog.setDefault(bundleID, for: entry.id, isScheme: isScheme, role: role) {
-			model.errorMessage = error
-			return
-		}
 		pending.insert(role)
 		let content = entry.id, isScheme = isScheme
 		Task {
-			let result = await Catalog.settledDefault(for: content, isScheme: isScheme, role: role, target: bundleID)
+			let result = await Catalog.setDefault(bundleID, for: content, isScheme: isScheme, role: role)
+			let succeeded = model.report(result, app: bundleID, content: content)
+			var prompted = false
+			if succeeded, !LSLegacyRoles.isRoleless(role.mask) {
+				// A single role is changed by a function that does not wait for macOS, or for the user.
+				prompted = await Catalog.settledDefault(for: content, isScheme: isScheme, role: role, target: bundleID).prompted
+			}
 			// Re-read every role: "All Roles" changes them all, and a declined prompt changes none.
 			await reload(roles)
 			pending.remove(role)
-			if !result.prompted, result.handler?.caseInsensitiveCompare(bundleID) != .orderedSame {
+			if succeeded, !prompted, states[role]?.isCurrent(bundleID) != true {
 				model.errorMessage = "Launch Services did not apply the change for \(content)."
 			}
 		}
@@ -225,14 +227,11 @@ private struct AppDetail: View {
 	}
 
 	private func choose(_ bundleID: String, for claim: Claim) {
-		if let error = Catalog.setDefault(bundleID, for: claim.id, isScheme: claim.isScheme) {
-			model.errorMessage = error
-			return
-		}
 		pending.insert(claim.key)
 		let appID = entry.id
 		Task {
-			let result = await Catalog.settledDefault(for: claim.id, isScheme: claim.isScheme, target: bundleID)
+			let result = await Catalog.setDefault(bundleID, for: claim.id, isScheme: claim.isScheme)
+			let applied = model.report(result, app: bundleID, content: claim.id)
 			let handlers = await Task.detached(priority: .userInitiated) {
 				Catalog.handlers(for: claim.id, isScheme: claim.isScheme)
 			}.value
@@ -243,7 +242,7 @@ private struct AppDetail: View {
 			}
 			pending.remove(claim.key)
 			if !claim.isScheme { model.defaultChanged(forType: claim.id, to: handlers.current) }
-			if !result.prompted, !handlers.isCurrent(bundleID) {
+			if applied, !handlers.isCurrent(bundleID) {
 				model.errorMessage = "Launch Services did not apply the change for \(claim.id)."
 			}
 		}

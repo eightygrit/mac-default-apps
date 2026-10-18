@@ -19,7 +19,6 @@ class SetCommand: OptionCommand {
 	private var contentType: String? = nil
 	private var inApplication: String = DoNothingApp.cliName
 	private var app: LSWrappers.ResolvedApp? = nil
-	private var statusCode: OSStatus = kLSUnknownErr
 	private var roles: Dictionary = ["editor":LSRolesMask.editor,"viewer":LSRolesMask.viewer,"shell":LSRolesMask.shell,"all":LSRolesMask.all]
 	private var role: LSRolesMask = LSRolesMask.all
 	
@@ -78,24 +77,26 @@ class SetCommand: OptionCommand {
 		case .failure(let error): throw CLIError.error(error.print(argument: (app: inApplication, content: self.contentType ?? self.kind)))
 		case .success(let resolved): app = resolved
 		}
+		var result: Result<Void, LSWrappers.LSErrors> = .failure(.defaultErr)
 		switch(kind) {
 		case "UTI","Extension","URL":
 			if let contentString = self.contentType {
 				let content = (kind == "Extension") ? LSWrappers.UTIs.copyUTIForExtension(contentString) : contentString
 				guard let contentUTI = content else { throw CLIError.error("SwiftDefaultApps ERROR: Could not resolve \(contentString) to a UTI.") }
-				statusCode = ((kind == "URL") ? LSWrappers.Schemes.setDefaultHandler(contentUTI, app!) : LSWrappers.UTIs.setDefaultHandler(contentUTI, app!, self.role))
+				result = LSWrappers.awaitCompletion { completionHandler in
+					if (kind == "URL") { LSWrappers.Schemes.setDefaultHandler(contentUTI, app!, completionHandler: completionHandler) }
+					else { LSWrappers.UTIs.setDefaultHandler(contentUTI, app!, self.role, completionHandler: completionHandler) }
+				}
 				self.contentType = contentUTI
 			}
 			break
 		case "http","mailto","ftp","rss","news":
-			statusCode = LSWrappers.Schemes.setDefaultHandler(kind, app!)
+			result = LSWrappers.awaitCompletion { LSWrappers.Schemes.setDefaultHandler(kind, app!, completionHandler: $0) }
 			break
 			
 		default:
-			statusCode = kLSUnknownErr
 			break
 		}
-		let result: Result<Void, LSWrappers.LSErrors> = (statusCode == 0) ? .success(()) : .failure(LSWrappers.LSErrors(value: statusCode))
 		displayAlert(result, app: app?.bundleID ?? inApplication, content: self.contentType ?? self.kind)
 	}
 }

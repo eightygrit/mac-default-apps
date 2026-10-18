@@ -200,23 +200,34 @@ enum Catalog {
 	/** Order of kind groups in the sidebar. */
 	static let kindOrder: [String] = kinds.map(\.0) + ["Other"]
 
-	/** Sets the default handler. Returns an error message, or nil on success. */
-	static func setDefault(_ bundleID: String, for content: String, isScheme: Bool, role: Role = .all) -> String? {
+	/**
+	Sets the default handler and waits for macOS to say it is done, which can mean waiting for the user to answer a
+	confirmation. Declining arrives as `.canceled`.
+	*/
+	static func setDefault(_ bundleID: String, for content: String, isScheme: Bool, role: Role = .all) async -> Result<Void, LSWrappers.LSErrors> {
 		let app: LSWrappers.ResolvedApp
 		switch LSWrappers.resolveApp(bundleID) {
-		case .failure(let error): return error.print(argument: (app: bundleID, content: content))
+		case .failure(let error): return .failure(error)
 		case .success(let resolved): app = resolved
 		}
-		let status = isScheme
-			? LSWrappers.Schemes.setDefaultHandler(content, app)
-			: LSWrappers.UTIs.setDefaultHandler(content, app, role.mask)
-		return status == 0 ? nil : LSWrappers.LSErrors(value: status).print(argument: (app: bundleID, content: content))
+		// `awaitCompletion` blocks its thread, so it gets one of its own rather than one of the cooperative pool's.
+		return await withCheckedContinuation { continuation in
+			DispatchQueue.global(qos: .userInitiated).async {
+				continuation.resume(returning: LSWrappers.awaitCompletion { completionHandler in
+					// The system can ask the user to confirm, so the request is made from the main thread, where the app's windows are.
+					DispatchQueue.main.async {
+						if isScheme { LSWrappers.Schemes.setDefaultHandler(content, app, completionHandler: completionHandler) }
+						else { LSWrappers.UTIs.setDefaultHandler(content, app, role.mask, completionHandler: completionHandler) }
+					}
+				})
+			}
+		}
 	}
 
 	/**
-	Waits until a default change requested with `setDefault` has really taken effect and returns the handler
-	actually in place. Launch Services applies changes asynchronously, and some of them (the default web
-	browser, for instance) only after the user confirms a CoreServicesUIAgent prompt, which they may decline.
+	Waits until a default change that only the per-role functions made has really taken effect, and returns the handler
+	actually in place. Those functions return before macOS has applied the change, and give no way to find out when it
+	has, or whether the user declined a confirmation. Changes that name no role do not need this: `setDefault` reports them.
 	*/
 	static func settledDefault(for content: String, isScheme: Bool, role: Role = .all, target: String) async -> (handler: String?, prompted: Bool) {
 		func current() -> String? {
