@@ -104,7 +104,7 @@ private struct ContentDetail: View {
 				// a change macOS has reported: give the new handler a moment to show up before saying that it did not.
 				prompted = await Catalog.settledDefault(for: content, isScheme: isScheme, role: role, target: bundleID).prompted
 			}
-			// Re-read every role: "All Roles" changes them all, and a declined prompt changes none.
+			// Re-read every role: "All Roles" changes them all, and a canceled prompt changes none.
 			await reload(roles)
 			pending.remove(role)
 			if succeeded, !prompted, states[role]?.isCurrent(bundleID) != true {
@@ -232,9 +232,9 @@ private struct AppDetail: View {
 		let appID = entry.id
 		Task {
 			let result = await Catalog.setDefault(bundleID, for: claim.id, isScheme: claim.isScheme)
-			let applied = model.report(result, app: bundleID, content: claim.id)
+			let succeeded = model.report(result, app: bundleID, content: claim.id)
 			var prompted = false
-			if applied {
+			if succeeded {
 				// Same as for a single role above: a read can trail a change macOS has reported.
 				prompted = await Catalog.settledDefault(for: claim.id, isScheme: claim.isScheme, target: bundleID).prompted
 			}
@@ -248,7 +248,7 @@ private struct AppDetail: View {
 			}
 			pending.remove(claim.key)
 			if !claim.isScheme { model.defaultChanged(forType: claim.id, to: handlers.current) }
-			if applied, !prompted, !handlers.isCurrent(bundleID) {
+			if succeeded, !prompted, !handlers.isCurrent(bundleID) {
 				model.errorMessage = "Launch Services did not apply the change for \(claim.id)."
 			}
 		}

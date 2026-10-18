@@ -165,7 +165,7 @@ final class AppModel: ObservableObject {
 	}
 
 	/**
-	Tells the user why a change of default failed. A change the user declined is not worth a message.
+	Tells the user why a change of default failed. A change the user canceled is not worth a message.
 	- Returns: Whether the change succeeded.
 	*/
 	@discardableResult

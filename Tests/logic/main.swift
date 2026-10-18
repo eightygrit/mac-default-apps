@@ -80,7 +80,7 @@ check("NSUserCancelledError", E(cocoa(NSUserCancelledError)), .canceled)
 check("OSStatus -128", E(osStatus(-128)), .canceled)
 check("OSStatus -54", E(osStatus(-54)), .permissionDenied)
 check("OSStatus of one of our own cases", E(osStatus(-10814)), .appNotFound)
-check("a declined prompt under a file error", E(cocoa(256, underlying: osStatus(-128))), .canceled)
+check("a canceled prompt under a file error", E(cocoa(256, underlying: osStatus(-128))), .canceled)
 check("a denial under a file error", E(cocoa(256, underlying: osStatus(-54))), .permissionDenied)
 check("no permission to write", E(cocoa(NSFileWriteNoPermissionError)), .permissionDenied)
 check("no permission to write, a level down", E(cocoa(256, underlying: cocoa(NSFileWriteNoPermissionError))), .permissionDenied)
@@ -126,11 +126,11 @@ for row in resolveTable {
     check("resolve [\(row.input)] status", got.status, row.status)
     check("resolve [\(row.input)] bundle ID", got.bundleID, row.bundleID)
 }
-// "None" selects the dummy application, which has to exist somewhere for the answer to be a success.
+// "None" selects Do Nothing, which has to exist somewhere for the answer to be a success.
 if DoNothingApp.copyURL() != nil {
-    check("resolve [None] finds the dummy application", resolve("None").bundleID, DoNothingApp.bundleID)
+    check("resolve [None] finds Do Nothing", resolve("None").bundleID, DoNothingApp.bundleID)
 } else {
-    check("resolve [None] without a copy of the dummy application", resolve("None").status, E.appNotFound.rawValue)
+    check("resolve [None] without a copy of Do Nothing", resolve("None").status, E.appNotFound.rawValue)
 }
 check("resolve [com.apple.textedit] keeps the spelling it was given", resolve("com.apple.textedit").bundleID, "com.apple.textedit")
 check("Do Nothing is selected by None", DoNothingApp.isNamed("None"), true)
@@ -161,25 +161,25 @@ func refusal(_ operation: (@escaping (Result<Void, E>) -> Void) -> Void) -> E? {
 // application is what gets refused, one that nobody depends on: were a check ever skipped, nothing of value could be changed.
 let harmlessUTI = "public.xbitmap-image"
 let missingApp = LSWrappers.ResolvedApp(url: URL(fileURLWithPath: "/nonexistent/Foo.app"), bundleID: "org.nonexistent.app")
-check("scheme with a space", refusal { LSWrappers.Schemes.setDefaultHandler("bad scheme", missingApp, completionHandler: $0) }, .invalidScheme)
-check("scheme starting with a digit", refusal { LSWrappers.Schemes.setDefaultHandler("1bad", missingApp, completionHandler: $0) }, .invalidScheme)
-check("scheme handler that is not installed", refusal { LSWrappers.Schemes.setDefaultHandler("nosuchscheme", missingApp, completionHandler: $0) }, .appNotFound)
-check("UTI handler that is not installed", refusal { LSWrappers.UTIs.setDefaultHandler(harmlessUTI, missingApp, .all, completionHandler: $0) }, .appNotFound)
-check("UTI handler that is not installed, for one role", refusal { LSWrappers.UTIs.setDefaultHandler(harmlessUTI, missingApp, .viewer, completionHandler: $0) }, .appNotFound)
+check("scheme with a space", refusal { LSWrappers.Schemes.setDefaultHandler("bad scheme", missingApp, completion: $0) }, .invalidScheme)
+check("scheme starting with a digit", refusal { LSWrappers.Schemes.setDefaultHandler("1bad", missingApp, completion: $0) }, .invalidScheme)
+check("scheme handler that is not installed", refusal { LSWrappers.Schemes.setDefaultHandler("nosuchscheme", missingApp, completion: $0) }, .appNotFound)
+check("UTI handler that is not installed", refusal { LSWrappers.UTIs.setDefaultHandler(harmlessUTI, missingApp, .all, completion: $0) }, .appNotFound)
+check("UTI handler that is not installed, for one role", refusal { LSWrappers.UTIs.setDefaultHandler(harmlessUTI, missingApp, .viewer, completion: $0) }, .appNotFound)
 check("an application that is not installed is not registered on demand", LSWrappers.ensureRegistered(missingApp), false)
 if case .success(let textEdit) = LSWrappers.resolveApp("com.apple.TextEdit") {
-    check("a UTI nobody declared, for an installed application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, completionHandler: $0) }, .unknownUTI)
+    check("a UTI nobody declared, for an installed application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, completion: $0) }, .unknownUTI)
 } else {
     check("TextEdit resolves", false, true)
 }
-check("a UTI nobody declared, for a missing application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", missingApp, completionHandler: $0) }, .unknownUTI)
-check("a UTI nobody declared, for one role and a missing application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", missingApp, .viewer, completionHandler: $0) }, .unknownUTI)
+check("a UTI nobody declared, for a missing application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", missingApp, completion: $0) }, .unknownUTI)
+check("a UTI nobody declared, for one role and a missing application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", missingApp, .viewer, completion: $0) }, .unknownUTI)
 if case .success(let textEdit) = LSWrappers.resolveApp("com.apple.TextEdit") {
-    check("a UTI nobody declared, for one role and an installed application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, .viewer, completionHandler: $0) }, .unknownUTI)
-    check("a UTI nobody declared, for viewer and editor", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, [.viewer, .editor], completionHandler: $0) }, .unknownUTI)
+    check("a UTI nobody declared, for one role and an installed application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, .viewer, completion: $0) }, .unknownUTI)
+    check("a UTI nobody declared, for viewer and editor", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, [.viewer, .editor], completion: $0) }, .unknownUTI)
 }
 
-// MARK: - Waiting for a completion handler (the command line)
+// MARK: - Waiting for a completion (the command line, and the app on a background queue)
 
 section("awaitCompletion")
 func code(_ result: Result<Void, E>) -> OSStatus {
@@ -294,27 +294,27 @@ check("an unknown scheme has no handlers", LSWrappers.Schemes.copyAllHandlers("n
 check("something that is not a scheme has no handlers", LSWrappers.Schemes.copyAllHandlers("bad scheme"), nil)
 check("an unknown scheme has no name", LSWrappers.Schemes.copyNameForScheme("nosuchscheme"), nil)
 
-// MARK: - Which requests are role-less
+// MARK: - Which requests are for All roles
 
-section("role-less requests")
-check("all roles", LSLegacyRoles.isRoleless(.all), true)
-check("viewer, editor and shell together", LSLegacyRoles.isRoleless([.viewer, .editor, .shell]), true)
-check("every role named", LSLegacyRoles.isRoleless([.none, .viewer, .editor, .shell]), true)
-check("viewer and editor are not enough", LSLegacyRoles.isRoleless([.viewer, .editor]), false)
-check("viewer", LSLegacyRoles.isRoleless(.viewer), false)
-check("editor", LSLegacyRoles.isRoleless(.editor), false)
-check("shell", LSLegacyRoles.isRoleless(.shell), false)
-check("none", LSLegacyRoles.isRoleless(.none), false)
-check("no role at all", LSLegacyRoles.isRoleless([]), false)
+section("requests for All roles")
+check("all roles", LSLegacyRoles.isAllRoles(.all), true)
+check("viewer, editor and shell together", LSLegacyRoles.isAllRoles([.viewer, .editor, .shell]), true)
+check("every role named", LSLegacyRoles.isAllRoles([.none, .viewer, .editor, .shell]), true)
+check("viewer and editor are not enough", LSLegacyRoles.isAllRoles([.viewer, .editor]), false)
+check("viewer", LSLegacyRoles.isAllRoles(.viewer), false)
+check("editor", LSLegacyRoles.isAllRoles(.editor), false)
+check("shell", LSLegacyRoles.isAllRoles(.shell), false)
+check("none", LSLegacyRoles.isAllRoles(.none), false)
+check("no role at all", LSLegacyRoles.isAllRoles([]), false)
 let htmlType = UTType("public.html")!
-check("a role-less default is what NSWorkspace opens", LSWrappers.UTIs.copyDefaultHandler("public.html"), NSWorkspace.shared.urlForApplication(toOpen: htmlType)?.path)
-check("the default argument is role-less", LSWrappers.UTIs.copyDefaultHandler("public.html"), LSWrappers.UTIs.copyDefaultHandler("public.html", inRoles: .all))
+check("a default for All roles is what NSWorkspace opens", LSWrappers.UTIs.copyDefaultHandler("public.html"), NSWorkspace.shared.urlForApplication(toOpen: htmlType)?.path)
+check("the default argument is All roles", LSWrappers.UTIs.copyDefaultHandler("public.html"), LSWrappers.UTIs.copyDefaultHandler("public.html", inRoles: .all))
 check("all roles are the handlers NSWorkspace lists", LSWrappers.UTIs.copyAllHandlers("public.html"), LSWrappers.copyHandlers(from: NSWorkspace.shared.urlsForApplications(toOpen: htmlType), asPath: true))
 check("Safari can open public.html", LSWrappers.UTIs.copyAllHandlers("public.html", asPath: false)?.contains("com.apple.Safari"), true)
 let htmlHandlers = LSWrappers.UTIs.copyAllHandlers("public.html", asPath: false) ?? []
 check("no application is listed twice for a type", Set(htmlHandlers.map { $0.lowercased() }).count, htmlHandlers.count)
-check("a role-less default is one of the role-less handlers", LSWrappers.UTIs.copyAllHandlers("public.html", asPath: false)?.contains(LSWrappers.UTIs.copyDefaultHandler("public.html", asPath: false) ?? ""), true)
-check("an unknown UTI has no role-less default", LSWrappers.UTIs.copyDefaultHandler("no.such.uti"), nil)
+check("a default for All roles is one of the handlers for All roles", LSWrappers.UTIs.copyAllHandlers("public.html", asPath: false)?.contains(LSWrappers.UTIs.copyDefaultHandler("public.html", asPath: false) ?? ""), true)
+check("an unknown UTI has no default for All roles", LSWrappers.UTIs.copyDefaultHandler("no.such.uti"), nil)
 // Every role of public.html is one application on most Macs, so it cannot tell the two paths apart. Some types open with an
 // application other than their Viewer (Books, not Preview, is the Viewer of a PDF): one such type, found at run time, shows that
 // a narrower mask is answered by the legacy function and not by NSWorkspace.
@@ -357,8 +357,8 @@ check("no default handler when switched off", LSLegacyRoles.copyDefaultHandlerID
 check("no handlers when switched off", LSLegacyRoles.copyAllHandlerIDs("public.html", .all), nil)
 check("the wrapper finds no default handler when switched off", LSWrappers.UTIs.copyDefaultHandler("public.html", inRoles: .viewer), nil)
 check("the wrapper finds no handlers when switched off", LSWrappers.UTIs.copyAllHandlers("public.html", inRoles: .viewer), nil)
-check("a role-less request does not need the functions", LSWrappers.UTIs.copyDefaultHandler("public.html"), NSWorkspace.shared.urlForApplication(toOpen: htmlType)?.path)
-check("a role-less list does not need them either", LSWrappers.UTIs.copyAllHandlers("public.html")?.isEmpty, false)
+check("a request for All roles does not need the functions", LSWrappers.UTIs.copyDefaultHandler("public.html"), NSWorkspace.shared.urlForApplication(toOpen: htmlType)?.path)
+check("a list for All roles does not need them either", LSWrappers.UTIs.copyAllHandlers("public.html")?.isEmpty, false)
 check("writing reports an incompatible system when switched off", LSLegacyRoles.setDefaultHandler("no.such.uti", .all, bundleID: "org.nonexistent.app"), E.incompatibleSys.rawValue)
 unsetenv("SWDA_NO_LEGACY_ROLES")
 check("the functions are available again once the switch is off", LSLegacyRoles.isAvailable, true)

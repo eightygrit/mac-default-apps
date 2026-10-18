@@ -193,7 +193,7 @@ Reports the outcome of a change of default handler on the command line, where ev
 - Parameter app: The application the user asked for, as a bundle identifier or as typed.
 - Parameter content: The URI Scheme or UTI the change was for.
 */
-func displayAlert(_ result: Result<Void, LSWrappers.LSErrors>, app: String?, content: String?) {
+func report(_ result: Result<Void, LSWrappers.LSErrors>, app: String?, content: String?) {
 	switch result {
 	case .success: print(LSWrappers.LSErrors.noError.print(argument: (app: app, content: content)))
 	case .failure(let error): print(error.print(argument: (app: app, content: content)))

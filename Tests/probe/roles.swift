@@ -4,7 +4,7 @@
 // Compares LSCopyDefaultRoleHandlerForContentType / LSCopyAllRoleHandlersForContentType, mask by mask,
 // with NSWorkspace.urlForApplication(toOpen:) / urlsForApplications(toOpen:) over every UTI the app lists.
 // The row to read is viewer|editor|shell: the new getters answer exactly that mask, not the "all" mask.
-// That is the evidence behind the role-less read path (see Tests/README.md for the reference numbers).
+// That is the evidence behind the All Roles read path (see Tests/README.md for the reference numbers).
 // The legacy functions are called on purpose, so compiling this file prints deprecation warnings.
 // READ-ONLY. Which legacy role mask does each new NSWorkspace getter correspond to?
 import AppKit

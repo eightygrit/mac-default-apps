@@ -27,7 +27,7 @@ class LSWrappers {
 	- defaultErr: Unknown error, for cases not covered above. 
 	- invalidFileURL: Trying to locate a file with a scheme different from file://
 	- unknownUTI: The system does not know the Uniform Type Identifier.
-	- canceled: The user declined the confirmation macOS asks for before it changes a default handler.
+	- canceled: The user canceled the confirmation macOS asks for before it changes a default handler.
 	- permissionDenied: The system, or the sandbox the program runs in, did not allow the change.
 	- timedOut: The change was not confirmed in time.
 	- noError: No error occured. 
@@ -71,7 +71,7 @@ class LSWrappers {
 			
 		}
 		/**
-		Maps an error reported by `NSWorkspace` to the closest case. A declined confirmation arrives as `NSUserCancelledError` or as an
+		Maps an error reported by `NSWorkspace` to the closest case. A canceled confirmation arrives as `NSUserCancelledError` or as an
 		`NSOSStatusErrorDomain` error, and the reason for a failure can sit a level down, under `NSUnderlyingErrorKey`.
 		- Parameter error: Any error. One of ours is returned as it is; one nothing here recognizes becomes `defaultErr`.
 		*/
@@ -92,7 +92,7 @@ class LSWrappers {
 		
 		- Parameter argument:
 		app: The application specified by the user, which could conceivably be a URL, a file-path, a bundle identifier or even a display name.
-		content: This is only used in the case the user supplies a malformed URI Scheme.
+		content: The URI Scheme or UTI the request was about. It is named by the messages for a malformed scheme, an unknown UTI, a canceled change, one macOS did not allow and one that timed out.
 		
 		- Returns: Human-readable error message specifying the problem, or unknown error if the problem is something not accounted for here.
 		*/
@@ -158,7 +158,7 @@ class LSWrappers {
 		- Returns: The Bundle identifier or POSIX path of an application, or nil if no valid handler was found.
 		*/
 		static func copyDefaultHandler (_ inUTI:String, inRoles: LSRolesMask = .all, asPath: Bool = true) -> String? {
-			if LSLegacyRoles.isRoleless(inRoles) {
+			if LSLegacyRoles.isAllRoles(inRoles) {
 				guard let type = UTType(inUTI), let url = NSWorkspace.shared.urlForApplication(toOpen: type) else { return nil }
 				return LSWrappers.copyHandlers(from: [url], asPath: asPath)?.first
 			}
@@ -180,7 +180,7 @@ class LSWrappers {
 		- Returns: An array of strings corresponding to the Bundle identifiers or POSIX paths of all currently registered handlers, or nil of none were found.
 		*/
 		static func copyAllHandlers (_ inUTI:String, inRoles: LSRolesMask = .all, asPath: Bool = true) -> Array<String>? {
-			if LSLegacyRoles.isRoleless(inRoles) {
+			if LSLegacyRoles.isAllRoles(inRoles) {
 				guard let type = UTType(inUTI) else { return nil }
 				return LSWrappers.copyHandlers(from: NSWorkspace.shared.urlsForApplications(toOpen: type), asPath: asPath)
 			}
@@ -221,24 +221,24 @@ class LSWrappers {
 			return Dictionary.init (keys: identifiers, values: handlers)
 		}
 		/**
-		Changes the default handler for a given UTI. Asynchronous: macOS can ask the user to confirm first, and then answers only when the user has.
+		Changes the default handler for a given UTI. Asynchronous. For All roles macOS can ask the user to confirm first, and then answers only when the user has; a single role is changed at once.
 		- See Also: `enum LSErrors` above.
 		- Parameters:
 		- inContent: A Uniform Type Identifier.
-		- inApp: An application resolved by `resolveApp(_:)`. Resolving "None" selects the dummy application, which disables the default handler for that UTI.
-		- inRoles: The specified Launch Services Role to modify. Can correspond to "Editor", "Viewer", "Shell" or "None". A request that names no role in particular (see `LSLegacyRoles.isRoleless(_:)`) is handed to `NSWorkspace`; a narrower one to `LSLegacyRoles`, which answers at once.
-		- completionHandler: Called exactly once, on any queue, and before this function returns if the request is refused up front (unknown UTI, application not found) or answered by `LSLegacyRoles`.
+		- inApp: An application resolved by `resolveApp(_:)`. Resolving "None" selects Do Nothing, which disables the default handler for that UTI.
+		- inRoles: The specified Launch Services Role to modify. Can correspond to "Editor", "Viewer", "Shell" or "None". A request for All roles (see `LSLegacyRoles.isAllRoles(_:)`) is handed to `NSWorkspace`; a narrower one to `LSLegacyRoles`, which answers at once.
+		- completion: Called exactly once, on any queue, and before this function returns if the request is refused up front (unknown UTI, application not found) or answered by `LSLegacyRoles`.
 		*/
-		static func setDefaultHandler (_ inContent: String, _ inApp: ResolvedApp, _ inRoles: LSRolesMask = .all, completionHandler: @escaping (Result<Void, LSErrors>) -> Void) {
+		static func setDefaultHandler (_ inContent: String, _ inApp: ResolvedApp, _ inRoles: LSRolesMask = .all, completion: @escaping (Result<Void, LSErrors>) -> Void) {
 			// Both paths refuse a UTI the system does not know: recording a preference for it would help nobody.
-			guard let type = UTType(inContent) else { completionHandler(.failure(.unknownUTI)); return }
-			guard LSWrappers.ensureRegistered(inApp) else { completionHandler(.failure(.appNotFound)); return }
-			if LSLegacyRoles.isRoleless(inRoles) {
-				NSWorkspace.shared.setDefaultApplication(at: inApp.url, toOpen: type) { completionHandler(Result(error: $0)) }
+			guard let type = UTType(inContent) else { completion(.failure(.unknownUTI)); return }
+			guard LSWrappers.ensureRegistered(inApp) else { completion(.failure(.appNotFound)); return }
+			if LSLegacyRoles.isAllRoles(inRoles) {
+				NSWorkspace.shared.setDefaultApplication(at: inApp.url, toOpen: type) { completion(Result(error: $0)) }
 			}
 			else {
 				let status = LSLegacyRoles.setDefaultHandler(inContent, inRoles, bundleID: inApp.bundleID)
-				completionHandler(status == 0 ? .success(()) : .failure(LSErrors(value: status)))
+				completion(status == 0 ? .success(()) : .failure(LSErrors(value: status)))
 			}
 		}
 	}
@@ -317,22 +317,23 @@ class LSWrappers {
 		- See Also: `enum LSErrors` above.
 		- Parameters:
 		- inScheme: A valid URI Scheme.
-		- inApp: An application resolved by `resolveApp(_:)`. Resolving "None" selects the dummy application, which disables the default handler for that URI Scheme.
-		- completionHandler: Called exactly once, on any queue, and before this function returns if the request is refused up front (malformed scheme, application not found).
+		- inApp: An application resolved by `resolveApp(_:)`. Resolving "None" selects Do Nothing, which disables the default handler for that URI Scheme.
+		- completion: Called exactly once, on any queue, and before this function returns if the request is refused up front (malformed scheme, application not found).
 		*/
-		static func setDefaultHandler (_ inScheme: String, _ inApp: ResolvedApp, completionHandler: @escaping (Result<Void, LSErrors>) -> Void) {
-			guard ((inScheme =~ /"\\A[a-zA-Z][a-zA-Z0-9.+-]+$") == true) else { completionHandler(.failure(.invalidScheme)); return }
-			guard LSWrappers.ensureRegistered(inApp) else { completionHandler(.failure(.appNotFound)); return }
-			NSWorkspace.shared.setDefaultApplication(at: inApp.url, toOpenURLsWithScheme: inScheme) { completionHandler(Result(error: $0)) }
+		static func setDefaultHandler (_ inScheme: String, _ inApp: ResolvedApp, completion: @escaping (Result<Void, LSErrors>) -> Void) {
+			guard ((inScheme =~ /"\\A[a-zA-Z][a-zA-Z0-9.+-]+$") == true) else { completion(.failure(.invalidScheme)); return }
+			guard LSWrappers.ensureRegistered(inApp) else { completion(.failure(.appNotFound)); return }
+			NSWorkspace.shared.setDefaultApplication(at: inApp.url, toOpenURLsWithScheme: inScheme) { completion(Result(error: $0)) }
 		}
 	}
 	
 	/**
-	Waits for an operation that reports through a completion handler, for the command line, which has nothing else to do meanwhile.
+	Waits for an operation that reports through a completion. It blocks the calling thread: the command line calls it on its only
+	thread, which has nothing else to do meanwhile, and the app on a background queue of its own.
 	The first report wins: a second one, or one that comes after the time is up, is ignored. The wait pumps the run loop of the
-	calling thread, so a completion handler that is dispatched to the main queue still runs when this is called from the main thread.
+	calling thread, so a completion that is dispatched to the main queue still runs when this is called from the main thread.
 	- Parameter timeout: How many seconds to wait. macOS can wait for the user to answer a confirmation, so this is long.
-	- Parameter operation: Starts the operation, given the completion handler it must call. It may call it before it returns.
+	- Parameter operation: Starts the operation, given the completion it must call. It may call it before it returns.
 	- Returns: What the operation reported, or `timedOut`.
 	*/
 	static func awaitCompletion (timeout: TimeInterval = 120, _ operation: (@escaping (Result<Void, LSErrors>) -> Void) -> Void) -> Result<Void, LSErrors> {
@@ -384,7 +385,7 @@ class LSWrappers {
 		return !NSWorkspace.shared.urlsForApplications(withBundleIdentifier: withBundleID).isEmpty
 	}
 	/**
-	Makes sure Launch Services knows an application before a handler is assigned to it. Only the dummy application is ever registered on demand (launching it used to do that as a side effect); any other application must already be registered.
+	Makes sure Launch Services knows an application before a handler is assigned to it. Only Do Nothing is ever registered on demand (launching it used to do that as a side effect); any other application must already be registered.
 	- Parameter app: An application resolved by `resolveApp(_:)`.
 	- Returns: `true` if Launch Services knows the application, `false` if it does not and could not be made to.
 	*/
@@ -426,7 +427,7 @@ class LSWrappers {
 			guard types.contains(type), let bundleID = bundle.bundleIdentifier else { return .failure(.notAnApp) }
 			return .success(ResolvedApp(url: bundle.bundleURL, bundleID: bundleID))
 		}
-		if DoNothingApp.isNamed(inParam) { // None is a valid value for our dummy application.
+		if DoNothingApp.isNamed(inParam) { // None is a valid value for Do Nothing.
 			guard let url = DoNothingApp.copyURL() else { return .failure(.appNotFound) }
 			return .success(ResolvedApp(url: url, bundleID: DoNothingApp.bundleID))
 		}
@@ -499,7 +500,7 @@ class LSWrappers {
 
 extension Result where Success == Void, Failure == LSWrappers.LSErrors {
 	/**
-	The outcome `NSWorkspace` reports through the optional error of a completion handler.
+	The outcome `NSWorkspace` reports through the optional error of a completion.
 	An error that nothing in `LSErrors` explains becomes `defaultErr`, which has no room for the system's own words, so they are logged.
 	*/
 	init(error: Error?) {

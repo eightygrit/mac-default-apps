@@ -58,7 +58,7 @@ class SetCommand: OptionCommand {
 			self.contentType = nil
 			self.kind = "news"
 		}
-		options.add(keys: ["--app", "--application"], usage: "The <application> to register as default handler. Specifying \"None\" will remove the currently registered handler.", valueSignature: "application", group:"application") { [unowned self] (value) in
+		options.add(keys: ["--app", "--application"], usage: "The <application> to register as default handler. Specifying \"\(DoNothingApp.cliName)\" will remove the currently registered handler.", valueSignature: "application", group:"application") { [unowned self] (value) in
 			self.inApplication = value
 		}
 		options.add(keys: ["--role"], usage: "--role <Viewer|Editor|Shell|All>, specifies the role with which to register the handler. Default is All.", valueSignature: "role") { [unowned self] (value) in
@@ -70,7 +70,7 @@ class SetCommand: OptionCommand {
 	}
 	
 	func execute(arguments: CommandArguments) throws  {
-		if (kind == "UTI" || kind == "Extension") && !LSLegacyRoles.isRoleless(role) && !LSLegacyRoles.isAvailable {
+		if (kind == "UTI" || kind == "Extension") && !LSLegacyRoles.isAllRoles(role) && !LSLegacyRoles.isAvailable {
 			throw CLIError.error("SwiftDefaultApps ERROR: \(LSLegacyRoles.unavailableMessage)")
 		}
 		switch LSWrappers.resolveApp(self.inApplication) {
@@ -83,20 +83,20 @@ class SetCommand: OptionCommand {
 			if let contentString = self.contentType {
 				let content = (kind == "Extension") ? LSWrappers.UTIs.copyUTIForExtension(contentString) : contentString
 				guard let contentUTI = content else { throw CLIError.error("SwiftDefaultApps ERROR: Could not resolve \(contentString) to a UTI.") }
-				result = LSWrappers.awaitCompletion { completionHandler in
-					if (kind == "URL") { LSWrappers.Schemes.setDefaultHandler(contentUTI, app!, completionHandler: completionHandler) }
-					else { LSWrappers.UTIs.setDefaultHandler(contentUTI, app!, self.role, completionHandler: completionHandler) }
+				result = LSWrappers.awaitCompletion { completion in
+					if (kind == "URL") { LSWrappers.Schemes.setDefaultHandler(contentUTI, app!, completion: completion) }
+					else { LSWrappers.UTIs.setDefaultHandler(contentUTI, app!, self.role, completion: completion) }
 				}
 				self.contentType = contentUTI
 			}
 			break
 		case "http","mailto","ftp","rss","news":
-			result = LSWrappers.awaitCompletion { LSWrappers.Schemes.setDefaultHandler(kind, app!, completionHandler: $0) }
+			result = LSWrappers.awaitCompletion { LSWrappers.Schemes.setDefaultHandler(kind, app!, completion: $0) }
 			break
 			
 		default:
 			break
 		}
-		displayAlert(result, app: app?.bundleID ?? inApplication, content: self.contentType ?? self.kind)
+		report(result, app: app?.bundleID ?? inApplication, content: self.contentType ?? self.kind)
 	}
 }

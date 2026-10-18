@@ -30,12 +30,12 @@ enum LSLegacyRoles {
 	}
 
 	/**
-	Whether a request names no role in particular, and so asks what opens the file whatever the role. `NSWorkspace` answers
-	that. Only a mask narrower than that, such as Viewer alone, needs the three functions below.
+	Whether a request is for All roles (`Role.all` in the app, `--role All` on the command line), which asks what opens the file
+	whatever the role. `NSWorkspace` answers that. Only a mask narrower than that, such as Viewer alone, needs the three functions below.
 	- Parameter roles: The roles a request is about.
 	- Returns: `true` for `.all` and for any mask that covers Viewer, Editor and Shell.
 	*/
-	static func isRoleless(_ roles: LSRolesMask) -> Bool {
+	static func isAllRoles(_ roles: LSRolesMask) -> Bool {
 		return roles == .all || roles.isSuperset(of: [.viewer, .editor, .shell])
 	}
 

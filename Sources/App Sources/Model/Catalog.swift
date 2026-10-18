@@ -97,7 +97,7 @@ struct HandlerState {
 
 }
 
-/** Builds the sidebar lists from Launch Services. Everything here is synchronous and meant to run off the main thread. */
+/** Builds the sidebar lists from Launch Services, and changes defaults. The reads are synchronous and meant to run off the main thread; `setDefault` is `async`. */
 enum Catalog {
 	private static let internetSchemes: [(String, String)] = [
 		("http", "Web Browser"), ("mailto", "E-Mail"), ("news", "News"),
@@ -214,11 +214,11 @@ enum Catalog {
 		// `awaitCompletion` blocks its thread, so it gets one of its own rather than one of the cooperative pool's.
 		return await withCheckedContinuation { continuation in
 			DispatchQueue.global(qos: .userInitiated).async {
-				continuation.resume(returning: LSWrappers.awaitCompletion { completionHandler in
+				continuation.resume(returning: LSWrappers.awaitCompletion { completion in
 					// The system can ask the user to confirm, so the request is made from the main thread, where the app's windows are.
 					DispatchQueue.main.async {
-						if isScheme { LSWrappers.Schemes.setDefaultHandler(content, app, completionHandler: completionHandler) }
-						else { LSWrappers.UTIs.setDefaultHandler(content, app, role.mask, completionHandler: completionHandler) }
+						if isScheme { LSWrappers.Schemes.setDefaultHandler(content, app, completion: completion) }
+						else { LSWrappers.UTIs.setDefaultHandler(content, app, role.mask, completion: completion) }
 					}
 				})
 			}
