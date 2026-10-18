@@ -8,6 +8,7 @@
 */
 
 import AppKit
+import UniformTypeIdentifiers
 
 @_silgen_name("_LSCopySchemesAndHandlerURLs") func LSCopySchemesAndHandlerURLs(_: UnsafeMutablePointer<NSArray?>, _: UnsafeMutablePointer<NSMutableArray?>) -> OSStatus
 @_silgen_name("_LSCopyAllApplicationURLs") func LSCopyAllApplicationURLs(_: UnsafeMutablePointer<NSMutableArray?>) -> OSStatus;
@@ -91,20 +92,15 @@ class LSWrappers {
 	/**
 	Groups functions dealing with UTIs.
 	*/
-	class UTType {
+	class UTIs {
 		/**
 		Copies a list of file-extensions for a given UTI.
 		- Parameter inUTI: A Uniform Type Identifier.
 		- Returns: An array of strings corresponding to file-extensions for that UTI, or nil.
 		*/
 		static func copyExtensionsFor(_ inUTI: String) -> [String]? {
-			if let result = (UTTypeCopyAllTagsWithClass(inUTI as CFString, kUTTagClassFilenameExtension)?.takeRetainedValue()) {
-				if let extensions = result as? [String] {
-					return extensions
-				}
-				else { return nil }
-			}
-			else { return nil }
+			guard let extensions = UTType(inUTI)?.tags[.filenameExtension], (extensions.isEmpty == false) else { return nil }
+			return extensions
 		}
 		/**
 		Copies the preferred UTI for a file extension.
@@ -114,7 +110,9 @@ class LSWrappers {
 		static func copyUTIForExtension(_ inExtension: String) -> String? {
 			let fileExtension = inExtension.trimmingCharacters(in: CharacterSet(charactersIn: "."))
 			guard (fileExtension.isEmpty == false) else { return nil }
-			return UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, fileExtension as CFString, nil)?.takeRetainedValue() as String?
+			// Not `UTType(filenameExtension:)`: that conforms to `public.data` by default, which changes the answer for every
+			// bundle type (`app`, `action`, ...) and for unknown extensions. Passing no supertype matches the call it replaces.
+			return UTType(tag: fileExtension, tagClass: .filenameExtension, conformingTo: nil)?.identifier
 		}
 		/**
 		Copies the bundle identifier of the application currently registered as the default handler for a given UTI.
@@ -162,10 +160,13 @@ class LSWrappers {
 		- Returns: A dictionary with UTIs as keys and bundle identifiers as values.
 		*/
 		static func copyAllUTIs () -> [String:String] {
-			let UTIs = (UTCopyDeclaredTypeIdentifiers() as! Array<String>).filter() { UTTypeConformsTo($0 as CFString,"public.item" as CFString) || UTTypeConformsTo($0 as CFString,"public.content" as CFString)} // Ignore UTIs belonging to devices and such.
+			let identifiers = (UTCopyDeclaredTypeIdentifiers() as! Array<String>).filter() { identifier in
+				guard let type = UTType(identifier) else { return false }
+				return type.conforms(to: .item) || type.conforms(to: .content)
+			} // Ignore UTIs belonging to devices and such.
 			var handlers:Array<String> = []
-			for UTI in UTIs {
-				if let handler = UTType.copyDefaultHandler(UTI) {
+			for UTI in identifiers {
+				if let handler = UTIs.copyDefaultHandler(UTI) {
 					handlers.append(handler)
 				}
 				else {
@@ -173,7 +174,7 @@ class LSWrappers {
 				}
 			}
 			
-			return Dictionary.init (keys: UTIs, values: handlers)
+			return Dictionary.init (keys: identifiers, values: handlers)
 		}
 		/**
 		Changes the default handler for a given UTI.
@@ -476,10 +477,10 @@ class LSWrappers {
 					}
 					else if let fileExtArray = (utiDict["CFBundleTypeExtensions"] as? [String]) {
 						for fileExt in fileExtArray {
-							if let newUTI = (UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, fileExt as CFString, "public.content" as CFString)?.takeRetainedValue() as String?) {
-								
-								if ((!UTTypeIsDynamic(newUTI as CFString)) && (handledUTIs[typeRole]!.firstIndex(of:newUTI) == nil)) {
-									utiArray.append(newUTI)
+							if let newType = UTType(tag: fileExt, tagClass: .filenameExtension, conformingTo: .content) {
+
+								if ((!newType.isDynamic) && (handledUTIs[typeRole]!.firstIndex(of:newType.identifier) == nil)) {
+									utiArray.append(newType.identifier)
 								}
 							}
 						}

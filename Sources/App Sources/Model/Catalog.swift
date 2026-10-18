@@ -157,7 +157,7 @@ enum Catalog {
 			ids = LSWrappers.Schemes.copyAllHandlers(content, asPath: false) ?? []
 			current = LSWrappers.Schemes.copyDefaultHandler(content, asPath: false)
 		} else {
-			ids = LSWrappers.UTType.copyAllHandlers(content, inRoles: role.mask, asPath: false) ?? []
+			ids = LSWrappers.UTIs.copyAllHandlers(content, inRoles: role.mask, asPath: false) ?? []
 			current = defaultHandler(forType: content, role: role)
 		}
 		var seen = Set<String>()
@@ -169,7 +169,7 @@ enum Catalog {
 	}
 
 	static func defaultHandler(forType identifier: String, role: Role = .all) -> String? {
-		LSWrappers.UTType.copyDefaultHandler(identifier, inRoles: role.queryMask, asPath: false)
+		LSWrappers.UTIs.copyDefaultHandler(identifier, inRoles: role.queryMask, asPath: false)
 	}
 
 	/** Default handler of each UTI, keyed by UTI; UTIs without one are omitted. */
@@ -207,7 +207,7 @@ enum Catalog {
 	static func setDefault(_ bundleID: String, for content: String, isScheme: Bool, role: Role = .all) -> String? {
 		let status = isScheme
 			? LSWrappers.Schemes.setDefaultHandler(content, bundleID)
-			: LSWrappers.UTType.setDefaultHandler(content, bundleID, role.mask)
+			: LSWrappers.UTIs.setDefaultHandler(content, bundleID, role.mask)
 		return status == 0 ? nil : LSWrappers.LSErrors(value: status).print(argument: (app: bundleID, content: content))
 	}
 

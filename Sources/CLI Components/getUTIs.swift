@@ -18,7 +18,7 @@ class GetUTIs: Command {
 	
 	func execute(arguments: CommandArguments) throws  {
 		
-		if let output = copyDictionaryAsString(LSWrappers.UTType.copyAllUTIs().sorted(by: { $0.0 < $1.0 })) {
+		if let output = copyDictionaryAsString(LSWrappers.UTIs.copyAllUTIs().sorted(by: { $0.0 < $1.0 })) {
 			print(output)
 		}
 		else { throw CLIError.error("SwiftDefaultApps ERROR: Couldn't generate list of UTIs") }

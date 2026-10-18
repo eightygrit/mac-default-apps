@@ -76,9 +76,9 @@ class SetCommand: OptionCommand {
 		switch(kind) {
 		case "UTI","Extension","URL":
 			if let contentString = self.contentType {
-				let content = (kind == "Extension") ? LSWrappers.UTType.copyUTIForExtension(contentString) : contentString
+				let content = (kind == "Extension") ? LSWrappers.UTIs.copyUTIForExtension(contentString) : contentString
 				guard let contentUTI = content else { throw CLIError.error("SwiftDefaultApps ERROR: Could not resolve \(contentString) to a UTI.") }
-				statusCode = ((kind == "URL") ? LSWrappers.Schemes.setDefaultHandler(contentUTI, bundleID!) : LSWrappers.UTType.setDefaultHandler(contentUTI, bundleID!, self.role))
+				statusCode = ((kind == "URL") ? LSWrappers.Schemes.setDefaultHandler(contentUTI, bundleID!) : LSWrappers.UTIs.setDefaultHandler(contentUTI, bundleID!, self.role))
 				self.contentType = contentUTI
 			}
 			break
