@@ -8,6 +8,7 @@
  */
 
 import Cocoa
+import UniformTypeIdentifiers
 
 @NSApplicationMain
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -21,7 +22,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     @objc func handleOpenEvent(_ event: NSAppleEventDescriptor!, withReplyEvent: NSAppleEventDescriptor!) {
         let documentPassed = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))!.stringValue!
-        guard let documentType =  try? NSWorkspace.shared.type(ofFile: URL(string:documentPassed)!.path) else {
+        let documentURL = URL(fileURLWithPath: URL(string:documentPassed)!.path)
+        guard let documentType = (try? documentURL.resourceValues(forKeys: [.contentTypeKey]))?.contentType?.identifier else {
             NSLog("Dummy application launched in response to file with unknown type, will now exit.")
             return
         }
