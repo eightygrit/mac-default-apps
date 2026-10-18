@@ -71,6 +71,9 @@ class SetCommand: OptionCommand {
 	}
 	
 	func execute(arguments: CommandArguments) throws  {
+		if (kind == "UTI" || kind == "Extension") && !LSLegacyRoles.isRoleless(role) && !LSLegacyRoles.isAvailable {
+			throw CLIError.error("SwiftDefaultApps ERROR: \(LSLegacyRoles.unavailableMessage)")
+		}
 		switch LSWrappers.resolveApp(self.inApplication) {
 		case .failure(let error): throw CLIError.error(error.print(argument: (app: inApplication, content: self.contentType ?? self.kind)))
 		case .success(let resolved): app = resolved

@@ -44,7 +44,13 @@ private struct ContentDetail: View {
 	@State private var pending: Set<Role> = []
 
 	private var isScheme: Bool { entry.kind == .scheme }
-	private var roles: [Role] { isScheme ? [.all] : Role.allCases }
+	/** Roles that can be told apart: only "All Roles" when the system no longer has the per-role functions. */
+	private var roles: [Role] { isScheme || !LSLegacyRoles.isAvailable ? [.all] : Role.allCases }
+	private var footer: String {
+		if isScheme { return "Links using \(entry.id): open in this application." }
+		let all = "Applies to every role, like “Change All…” in Finder’s Get Info."
+		return LSLegacyRoles.isAvailable ? all : "\(all) \(LSLegacyRoles.unavailableMessage)"
+	}
 
 	var body: some View {
 		Form {
@@ -54,11 +60,9 @@ private struct ContentDetail: View {
 			Section {
 				picker(for: .all, label: "Open With")
 			} footer: {
-				Text(isScheme
-					 ? "Links using \(entry.id): open in this application."
-					 : "Applies to every role, like “Change All…” in Finder’s Get Info.")
+				Text(footer)
 			}
-			if !isScheme {
+			if roles.count > 1 {
 				Section("Per-Role Defaults") {
 					ForEach([Role.viewer, .editor, .shell]) { picker(for: $0, label: $0.rawValue) }
 				}

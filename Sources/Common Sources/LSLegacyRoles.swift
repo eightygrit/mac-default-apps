@@ -39,6 +39,9 @@ enum LSLegacyRoles {
 		return roles == .all || roles.isSuperset(of: [.viewer, .editor, .shell])
 	}
 
+	/// What to say when a role is asked for and `isAvailable` is false.
+	static let unavailableMessage = "Per-role defaults are not available on this version of macOS."
+
 	/**
 	Whether the system still has all three functions. When it does not, only the handler for all roles can be read or changed.
 	*/

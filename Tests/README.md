@@ -10,6 +10,7 @@ and the ones that compile Swift call `swiftc` directly (a test target would mean
 | [`probe/run.sh`](probe/run.sh) `<name>` | facts about macOS the design rests on, mostly old calls against new ones | no |
 | [`probe/fixups.sh`](probe/fixups.sh) | why private and legacy symbols are looked up with `dlsym` | no |
 | [`build-scratch.sh`](build-scratch.sh) | builds one target outside the repository and counts compiler warnings | no |
+| [`legacy-roles-off.sh`](legacy-roles-off.sh) `<swda>` | the CLI with the per-role functions switched off (`SWDA_NO_LEGACY_ROLES=1`): `--role Viewer\|Editor\|Shell` is refused, everything else answers as before | no |
 | [`write-roundtrip.sh`](write-roundtrip.sh) | real writes: set, read back, restore | **yes**, guarded |
 
 ## Golden output
@@ -45,6 +46,15 @@ VERBOSE=1 Tests/logic/run.sh     # every check
 `logic/main.swift` is compiled together with `Sources/Common Sources`, the code the app and the CLI share. It only
 reads Launch Services; the setter checks use applications that do not exist, so nothing is ever written. When
 behavior changes on purpose, change the expected value in the same commit as the code.
+
+## Without the per-role functions
+
+The three functions that read and write the handler of one role (`LSLegacyRoles.swift`) are the part of the design
+Apple is most likely to remove. `SWDA_NO_LEGACY_ROLES=1` makes the program behave as if it had: the lookups fail, the
+app shows "All Roles" only, and the CLI refuses `--role Viewer|Editor|Shell` with
+"Per-role defaults are not available on this version of macOS." `legacy-roles-off.sh <swda>` runs the CLI both ways
+and checks that nothing which names no role changes. It writes nothing: the refused `setHandler` calls stop in the CLI,
+and with the switch set the role-setting function cannot be found anyway.
 
 ## Probes
 

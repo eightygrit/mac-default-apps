@@ -70,6 +70,9 @@ class ReadCommand: OptionCommand {
 	
 	func execute(arguments: CommandArguments) throws  {
 		
+		if (kind == "UTI" || kind == "Extension") && !LSLegacyRoles.isRoleless(role) && !LSLegacyRoles.isAvailable {
+			throw CLIError.error("SwiftDefaultApps ERROR: \(LSLegacyRoles.unavailableMessage)")
+		}
 		switch(kind,getAll) {
 			
 		case ("UTI",true),("Extension",true),("URL",true):
