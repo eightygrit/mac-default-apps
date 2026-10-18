@@ -10,10 +10,11 @@
 import SwiftUI
 
 /** Native NSSearchField; ↑/↓ move the list selection without leaving the field. */
+@MainActor
 struct SearchField: NSViewRepresentable {
 	@Binding var text: String
 	var prompt: String
-	var onMove: (Int) -> Void
+	var onMove: @MainActor (Int) -> Void
 
 	func makeNSView(context: Context) -> NSSearchField {
 		let field = NSSearchField()
@@ -30,6 +31,7 @@ struct SearchField: NSViewRepresentable {
 
 	func makeCoordinator() -> Coordinator { Coordinator(self) }
 
+	@MainActor
 	final class Coordinator: NSObject, NSSearchFieldDelegate {
 		var parent: SearchField
 		init(_ parent: SearchField) { self.parent = parent }

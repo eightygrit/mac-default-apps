@@ -14,6 +14,7 @@ Sidebar list backed by NSOutlineView. The File Types list holds thousands of row
 builds the visible ones and reloads in one pass, where SwiftUI's List diffs every row on each change.
 Group headers toggle on click (Option-click toggles every group); collapsed state lives in PaneModel.
 */
+@MainActor
 struct EntryList: NSViewRepresentable {
 	@ObservedObject var model: PaneModel
 

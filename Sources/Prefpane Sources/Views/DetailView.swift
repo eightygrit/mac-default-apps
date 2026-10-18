@@ -11,6 +11,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /** Shows the detail of the selected entry; each entry gets fresh state through `.id`. */
+@MainActor
 struct DetailView: View {
 	@EnvironmentObject private var model: PaneModel
 
@@ -34,6 +35,7 @@ struct DetailView: View {
 // MARK: - Scheme / UTI
 
 /** Default-application pickers for a URL scheme or a UTI. */
+@MainActor
 private struct ContentDetail: View {
 	let entry: Entry
 	@EnvironmentObject private var model: PaneModel
@@ -106,6 +108,7 @@ private struct ContentDetail: View {
 }
 
 /** A menu of candidate handlers plus "Do Nothing" and "Other…". */
+@MainActor
 private struct HandlerPicker: View {
 	let label: String
 	let state: HandlerState
@@ -120,7 +123,7 @@ private struct HandlerPicker: View {
 	}
 
 	var body: some View {
-		Picker(label, selection: Binding(get: { currentTag }, set: select)) {
+		Picker(label, selection: Binding(get: { currentTag }, set: { select($0) })) {
 			if currentTag.isEmpty {
 				Text("None").tag("")
 			}
@@ -165,6 +168,7 @@ private struct Claim: Identifiable {
 }
 
 /** Everything an application declares, with one-click "Make Default". */
+@MainActor
 private struct AppDetail: View {
 	let entry: Entry
 	let declarations: AppDeclarations
@@ -263,6 +267,7 @@ private struct AppDetail: View {
 A declared scheme or UTI. Launch Services cannot clear a default, only replace it, so a row this app
 already owns offers a menu to hand it to another application; other rows offer "Make Default".
 */
+@MainActor
 private struct ClaimRow: View {
 	let claim: Claim
 	let appID: String
@@ -313,6 +318,7 @@ private struct ClaimRow: View {
 // MARK: - Shared
 
 /** Shown while a change waits for Launch Services, or for the user to answer its confirmation prompt. */
+@MainActor
 private struct WaitingLabel: View {
 	var body: some View {
 		HStack(spacing: 6) {
@@ -322,6 +328,7 @@ private struct WaitingLabel: View {
 	}
 }
 
+@MainActor
 private struct DetailHeader: View {
 	let entry: Entry
 
@@ -353,6 +360,7 @@ private struct DetailHeader: View {
 	}
 }
 
+@MainActor
 struct EntryIcon: View {
 	let entry: Entry
 	let size: CGFloat

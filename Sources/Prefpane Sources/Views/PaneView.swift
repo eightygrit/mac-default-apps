@@ -10,6 +10,7 @@
 import SwiftUI
 
 /** Root view. Every region stretches with its container, so the pane follows whatever size it is given. */
+@MainActor
 struct PaneView: View {
 	@EnvironmentObject private var model: PaneModel
 	@State private var showsAbout = false
@@ -55,6 +56,7 @@ struct PaneView: View {
 }
 
 /** Search field, the filtered list, and the custom-scheme field on the URL Schemes tab. */
+@MainActor
 private struct SidebarView: View {
 	@EnvironmentObject private var model: PaneModel
 	@State private var newScheme = ""
@@ -90,8 +92,8 @@ private struct SidebarView: View {
 				HStack(spacing: 6) {
 					TextField("New scheme", text: $newScheme)
 						.textFieldStyle(.roundedBorder)
-						.onSubmit(addScheme)
-					Button("Add", action: addScheme)
+						.onSubmit { addScheme() }
+					Button("Add") { addScheme() }
 						.disabled(newScheme.trimmingCharacters(in: .whitespaces).isEmpty)
 				}
 				.padding([.horizontal, .bottom], 10)
@@ -105,6 +107,7 @@ private struct SidebarView: View {
 	}
 }
 
+@MainActor
 private struct AboutView: View {
 	private var version: String {
 		let info = Bundle(for: PaneModel.self).infoDictionary ?? [:]

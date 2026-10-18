@@ -43,9 +43,7 @@ final class SWDAMainPrefPane: NSPreferencePane {
 	override func didSelect() {
 		model.load(model.category)
 		// No resize notification crosses the process boundary, so poll; a window-list query is cheap.
-		tracker = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-			MainActor.assumeIsolated { self?.followHostHeight() }
-		}
+		tracker = Timer.scheduledTimer(timeInterval: 0.25, target: self, selector: #selector(followHostHeight), userInfo: nil, repeats: true)
 	}
 
 	override func didUnselect() {
@@ -54,7 +52,7 @@ final class SWDAMainPrefPane: NSPreferencePane {
 	}
 
 	/** Resizes the pane window to the System Settings pane area, keeping its top edge in place. */
-	private func followHostHeight() {
+	@objc private func followHostHeight() {
 		guard let window = mainView.window, let height = Self.availableHeight(),
 			  abs(window.frame.height - height) >= 1 else { return }
 		let frame = window.frame

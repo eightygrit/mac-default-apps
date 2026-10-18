@@ -136,16 +136,18 @@ final class PaneModel: ObservableObject {
 			let handlers = category == .types ? Catalog.defaultHandlers(forTypes: result.map(\.id)) : [:]
 			let apps = Dictionary(Set(handlers.values.map { $0.lowercased() }).compactMap { id in AppRef(bundleID: id).map { (id, $0) } },
 								  uniquingKeysWith: { a, _ in a })
-			await MainActor.run {
-				if category == .types {
-					self.typeHandlers = handlers
-					self.apps = apps
-				}
-				self.entries[category] = result
-				self.loading.remove(category)
-				if category == self.category { self.refresh() }
-			}
+			await self.finishLoad(category, result, handlers: handlers, apps: apps)
 		}
+	}
+
+	private func finishLoad(_ category: Category, _ result: [Entry], handlers: [String: String], apps: [String: AppRef]) {
+		if category == .types {
+			typeHandlers = handlers
+			self.apps = apps
+		}
+		entries[category] = result
+		loading.remove(category)
+		if category == self.category { refresh() }
 	}
 
 	/** Moves the selection within the visible list; used by arrow keys in the search field. */
