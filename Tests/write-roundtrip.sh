@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# GUARDED. This script CHANGES real default handlers on the Mac it runs on, and then puts them back.
+# GUARDED. This script CHANGES real default handlers on the Mac it runs on, and then puts back what it can.
 # Run it only while you are sitting at the machine: macOS may ask you to confirm in a prompt, and one case
-# needs you to decline it.
+# needs you to cancel it.
 #
 # usage: Tests/write-roundtrip.sh [--i-understand] <path-to-swda> [case ...]
 #
@@ -10,18 +10,21 @@
 #
 # cases (default: all, in this order):
 #   scheme             a URL scheme that has two or more handlers
-#   uti                a UTI, role-less ("All Roles"), whose Viewer and Editor defaults are the same application
+#   uti                a UTI, for All roles, whose Viewer and Editor defaults are the same application
 #   uti-role           the same, with --role Viewer: Editor and Shell must not move
-#   decline            like uti, but YOU decline the system prompt: the default must stay, swda must say canceled
+#   cancel             like uti, but YOU cancel the system prompt: the default must stay, swda must say canceled
 #   extension          --extension with a known extension: the default of its UTI must change
-#   unknown-extension  --extension with an invented one: does a real file with that extension follow?
+#   unknown-extension  --extension with an invented one: does a real file with that extension follow? (NOT undone, see below)
 #   none               Do Nothing ("None") as the handler of a UTI (ThisAppDoesNothing.app must sit next to swda)
 #
-# Every case remembers the original handler, changes it, reads it back (up to 20 s), reads it again after 5 s
-# (the change must stay: see upstream issue 72), restores the original and reads that back. A trap restores
-# whatever is still changed when the script is interrupted. http, https, ftp, file, mailto and public.html
-# are never used: changing one of them can change others, and the original of a role-less change is not
-# always recoverable exactly.
+# Every case except cancel and unknown-extension remembers the original handler, changes it, reads it back
+# (up to 20 s), reads it again after 5 s (the change must stay: see upstream issue 72), restores the original
+# and reads that back. A trap restores whatever is still changed when the script is interrupted.
+#   cancel             is meant to change nothing; it restores only if the change happened after all.
+#   unknown-extension  cannot be undone: the handler it sets applies only to files named *.swdatestext.
+#   uti                a change for All roles cannot restore each role separately; the script reports a difference.
+# http, https, ftp, file, mailto, a few other schemes and public.html are never used: changing one of them can
+# change others, and the original of a change for All roles is not always recoverable exactly.
 #
 # Overrides: SWDA_TEST_SCHEME, SWDA_TEST_UTI (space-separated candidates), SWDA_TEST_APP (path of the new handler).
 set -u
@@ -29,9 +32,9 @@ set -u
 dry=1
 if [ "${1:-}" = "--i-understand" ]; then dry=0; shift; fi
 SWDA="${1:-}"
-if [ -z "$SWDA" ] || [ ! -x "$SWDA" ]; then sed -n '2,25p' "${BASH_SOURCE[0]}"; exit 2; fi
+if [ -z "$SWDA" ] || [ ! -x "$SWDA" ]; then sed -n '2,29p' "${BASH_SOURCE[0]}"; exit 2; fi
 shift
-CASES="${*:-scheme uti uti-role decline extension unknown-extension none}"
+CASES="${*:-scheme uti uti-role cancel extension unknown-extension none}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 PASS=0; FAIL=0
@@ -80,10 +83,12 @@ wait_for() {     # wait_for <pattern> <seconds> <getHandler args...>: true once 
 # ------------------------------------------------------------------ subjects
 UTI_CANDIDATES="${SWDA_TEST_UTI:-public.json public.xml public.yaml public.comma-separated-values-text net.daringfireball.markdown public.log public.c-source}"
 SKIP_SCHEMES=" http https ftp file mailto tel sms facetime facetime-audio imessage webcal feed ssh x-apple.systempreferences "
+SKIP_UTIS=" public.html "   # setting it also sets http and https
 
 pick_uti() {     # sets UTI ORIG TARGET: Viewer and Editor defaults are one application and another candidate exists
 	local u v e
 	for u in $UTI_CANDIDATES; do
+		case "$SKIP_UTIS" in *" $u "*) continue ;; esac
 		v="$(handler --UTI "$u" --role Viewer)"; e="$(handler --UTI "$u" --role Editor)"
 		{ [ -n "$v" ] && [ "$v" = "$e" ]; } || continue
 		TARGET="${SWDA_TEST_APP:-$(pick_other "$v" --UTI "$u")}"; [ -n "$TARGET" ] || continue
@@ -133,7 +138,7 @@ exercise() {
 		after="$(snapshot "$SNAPSHOT_UTI")"
 		if [ "$after" = "$before" ]; then ok "$LABEL: all three roles are back as they were"
 		elif [ "${SNAPSHOT_STRICT:-0}" = 1 ]; then bad "$LABEL: roles differ from before: [$before] now [$after]"
-		else note "roles differ from before (a role-less change cannot restore each role separately): [$before] now [$after]"; fi
+		else note "roles differ from before (a change for All roles cannot restore each role separately): [$before] now [$after]"; fi
 	fi
 }
 reset_case() { LABEL=""; READ_ARGS=(); SET_ARGS=(); ORIG=""; TARGET=""; SET_APP=""; EXPECT=""; DURING=""; SNAPSHOT_UTI=""; SNAPSHOT_STRICT=0; }
@@ -162,21 +167,21 @@ case_uti_role() {
 	SNAPSHOT_UTI="$UTI"; SNAPSHOT_STRICT=1; DURING=check_other_roles
 	begin && exercise
 }
-case_decline() {
+case_cancel() {
 	local out rc now
 	pick_uti || { note "no suitable UTI; try SWDA_TEST_UTI"; return; }
-	LABEL="decline $UTI"
+	LABEL="cancel $UTI"
 	begin || return
-	say "    >>> If macOS asks you to confirm now, decline it (Cancel / \"Don't Allow\")."
+	say "    >>> If macOS asks you to confirm now, cancel it (Cancel / \"Don't Allow\")."
 	RESTORE+=("$(printf '%q ' "$SWDA" setHandler --UTI "$UTI" --app "$ORIG")")
 	out="$("$SWDA" setHandler --UTI "$UTI" --app "$TARGET" 2>&1)"; rc=$?
 	say "    swda (exit $rc): $out"
 	sleep 3
 	now="$(handler --UTI "$UTI")"
-	if [ "$now" = "$ORIG" ]; then ok "decline: the handler did not change"; RESTORE=()
-	else bad "decline: the handler is now $now (no prompt appeared, or it was accepted); restoring"; restore_all; fi
-	if printf '%s' "$out" | grep -qi 'cancel'; then ok "decline: swda reported the cancellation"
-	else note "decline: swda did not say 'canceled' (only a build with asynchronous setters can tell; older ones report success regardless)"; fi
+	if [ "$now" = "$ORIG" ]; then ok "cancel: the handler did not change"; RESTORE=()
+	else bad "cancel: the handler is now $now (no prompt appeared, or it was accepted); restoring"; restore_all; fi
+	if printf '%s' "$out" | grep -qi 'cancel'; then ok "cancel: swda said canceled"
+	else note "cancel: swda did not say 'canceled' (only a change for All roles waits for the answer; a single role is reported at once)"; fi
 }
 case_extension() {
 	local pair ext u v e found=0
@@ -225,9 +230,9 @@ case_none() {
 # ------------------------------------------------------------------ main
 if [ "$dry" = 0 ]; then
 	cat <<BANNER
-This changes real default handlers on this Mac, then restores them.
+This changes real default handlers on this Mac, then restores them (not the unknown-extension case).
 Cases: $CASES
-Have the machine in front of you: macOS may ask you to confirm, and 'decline' needs you to say no.
+Have the machine in front of you: macOS may ask you to confirm, and 'cancel' needs you to say no.
 BANNER
 	printf 'Type yes to continue: '
 	read -r answer </dev/tty
@@ -241,7 +246,7 @@ for c in $CASES; do
 		scheme)            case_scheme ;;
 		uti)               case_uti ;;
 		uti-role)          case_uti_role ;;
-		decline)           case_decline ;;
+		cancel)            case_cancel ;;
 		extension)         case_extension ;;
 		unknown-extension) case_unknown_extension ;;
 		none)              case_none ;;

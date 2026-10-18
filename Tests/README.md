@@ -10,7 +10,7 @@ and the ones that compile Swift call `swiftc` directly (a test target would mean
 | [`probe/run.sh`](probe/run.sh) `<name>` | facts about macOS the design rests on, mostly old calls against new ones | no |
 | [`probe/fixups.sh`](probe/fixups.sh) | why private and legacy symbols are looked up with `dlsym` | no |
 | [`build-scratch.sh`](build-scratch.sh) | builds one target outside the repository and counts compiler warnings | no |
-| [`legacy-roles-off.sh`](legacy-roles-off.sh) `<swda>` | the CLI with the per-role functions switched off (`SWDA_NO_LEGACY_ROLES=1`): `--role Viewer\|Editor\|Shell` is refused, everything else answers as before | no |
+| [`legacy-roles-off.sh`](legacy-roles-off.sh) `<swda>` | the CLI with the per-role functions switched off (`SWDA_NO_LEGACY_ROLES=1`): `--role Viewer\|Editor\|Shell` is refused, everything else answers as before | no; it stops at once if the binary ignores the switch |
 | [`write-roundtrip.sh`](write-roundtrip.sh) | real writes: set, read back, restore | **yes**, guarded |
 
 ## Golden output
@@ -44,8 +44,10 @@ VERBOSE=1 Tests/logic/run.sh     # every check
 ```
 
 `logic/main.swift` is compiled together with `Sources/Common Sources`, the code the app and the CLI share. It only
-reads Launch Services; the setter checks use applications that do not exist, so nothing is ever written. When
-behavior changes on purpose, change the expected value in the same commit as the code.
+reads Launch Services. The checks of the setters ask for an application that does not exist, or a type that does not
+exist (or, where a real type is needed so that the application is what gets refused, one nobody depends on), so the
+code under test has to refuse them; the comment above those checks says what could change were a refusal ever skipped.
+When behavior changes on purpose, change the expected value in the same commit as the code.
 
 ## Without the per-role functions
 
@@ -53,8 +55,10 @@ The three functions that read and write the handler of one role (`LSLegacyRoles.
 Apple is most likely to remove. `SWDA_NO_LEGACY_ROLES=1` makes the program behave as if it had: the lookups fail, the
 app shows "All Roles" only, and the CLI refuses `--role Viewer|Editor|Shell` with
 "Per-role defaults are not available on this version of macOS." `legacy-roles-off.sh <swda>` runs the CLI both ways
-and checks that nothing which names no role changes. It writes nothing: the refused `setHandler` calls stop in the CLI,
-and with the switch set the role-setting function cannot be found anyway.
+and checks that nothing which asks for All roles changes. It writes nothing. A binary that ignores the switch (one
+built before it existed) would carry out the `setHandler` calls, so the script first proves with reads that the binary
+honors it and stops otherwise; the calls name an application that does not exist, so even then they would fail; and
+with the switch set the role-setting function cannot be found anyway.
 
 ## Probes
 
@@ -93,11 +97,14 @@ builds can be compared with `diff`. Unlike `build.sh` it does not sign, install 
 
 ## Writes (guarded)
 
-`write-roundtrip.sh` changes real default handlers and puts them back. Without `--i-understand` it only chooses
-its subjects and prints the plan. Run it while you are at the machine: macOS may ask you to confirm in a prompt, and the
-`decline` case needs you to answer "no". Every case sets a handler, reads it back, checks that the change stays
-for five seconds, restores the original and reads that back; a trap restores whatever is still changed if you
-interrupt it. It never touches `http`, `https`, `ftp`, `file`, `mailto` or `public.html`.
+`write-roundtrip.sh` changes real default handlers and puts back what it can. Without `--i-understand` it only
+chooses its subjects and prints the plan. Run it while you are at the machine: macOS may ask you to confirm in a prompt,
+and the `cancel` case needs you to answer "no". Every case but two sets a handler, reads it back, checks that the change
+stays for five seconds, restores the original and reads that back; a trap restores whatever is still changed if you
+interrupt it. The two exceptions: `cancel` is meant to change nothing, and `unknown-extension` cannot be undone (the
+handler it sets applies only to files named `*.swdatestext`). A change for All roles cannot restore each role
+separately, and the script says so when they differ afterwards. It never uses `http`, `https`, `ftp`, `file`, `mailto`,
+a few other schemes or `public.html`.
 
 ```bash
 Tests/write-roundtrip.sh /tmp/swda-cli/products/Release/swda                    # plan only

@@ -6,7 +6,8 @@
 #
 # The shared sources (Sources/Common Sources) are what both the app and the CLI compile, so this checks the
 # real code, not a copy. It uses swiftc directly: a test target would mean hand-editing two project files.
-# The checks only read Launch Services state; the ones that would write use applications that do not exist.
+# The checks only read Launch Services state; the setter checks name things that do not exist, so the code under
+# test has to refuse them (see the comment above them in main.swift).
 set -eu
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
