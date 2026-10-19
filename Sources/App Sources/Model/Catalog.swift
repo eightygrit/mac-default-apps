@@ -32,8 +32,6 @@ enum Role: String, CaseIterable, Identifiable {
 		case .shell: return .shell
 		}
 	}
-	/** Roles queried to report the current default; mirrors how Launch Services resolves "open". */
-	var queryMask: LSRolesMask { self == .all ? [.viewer, .editor] : mask }
 }
 
 /** Content and applications an application declares it can open. */
@@ -81,10 +79,8 @@ struct AppRef: Identifiable, Hashable {
 	let name: String
 	let path: String?
 
-	static let doNothingID = "cl.fail.lordkamina.ThisAppDoesNothing"
-
 	init?(bundleID: String) {
-		guard bundleID.caseInsensitiveCompare(AppRef.doNothingID) != .orderedSame else { return nil }
+		guard bundleID.caseInsensitiveCompare(DoNothingApp.bundleID) != .orderedSame else { return nil }
 		guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
 		self.id = bundleID
 		self.path = url.path
@@ -101,24 +97,25 @@ struct HandlerState {
 
 }
 
-/** Builds the sidebar lists from Launch Services. Everything here is synchronous and meant to run off the main thread. */
+/** Builds the sidebar lists from Launch Services, and changes defaults. The reads are synchronous and meant to run off the main thread; `setDefault` is `async`. */
 enum Catalog {
 	private static let internetSchemes: [(String, String)] = [
 		("http", "Web Browser"), ("mailto", "E-Mail"), ("news", "News"),
 		("rss", "RSS"), ("ftp", "FTP"), ("im", "Instant Messaging"),
 	]
 
-	static func load(_ category: Category) -> [Entry] {
+	/** The entries of a category, or nil when this version of macOS does not provide the list. */
+	static func load(_ category: Category) -> [Entry]? {
 		switch category {
 		case .internet:
 			return internetSchemes.map { Entry(id: $0.0, kind: .scheme, title: $0.1, subtitle: "\($0.0):") }
 		case .schemes:
-			let schemes = (LSWrappers.Schemes.copySchemesAndHandlers()?.keys).map(Array.init) ?? []
+			guard let schemes = LSWrappers.Schemes.copySchemesAndHandlers()?.keys else { return nil }
 			return concurrentMap(schemes.filter { $0 != "*" }) { scheme in
-				Entry(id: scheme, kind: .scheme, title: scheme, subtitle: LSWrappers.Schemes.getNameForScheme(scheme) ?? "")
+				Entry(id: scheme, kind: .scheme, title: scheme, subtitle: LSWrappers.Schemes.copyNameForScheme(scheme) ?? "")
 			}.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
 		case .types:
-			let identifiers = (UTCopyDeclaredTypeIdentifiers() as? [String]) ?? []
+			guard let identifiers = LSPrivate.copyDeclaredTypeIdentifiers() else { return nil }
 			return concurrentMap(identifiers) { identifier -> Entry? in
 				guard let type = UTType(identifier), type.conforms(to: .item) || type.conforms(to: .content) else { return nil }
 				let extensions = (type.tags[.filenameExtension] ?? []).map { $0.lowercased() }
@@ -127,10 +124,10 @@ enum Catalog {
 				return Entry(id: identifier, kind: .type, title: description, subtitle: subtitle, extensions: extensions, kindGroup: kindGroup(of: type))
 			}.compactMap { $0 }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
 		case .apps:
-			let paths = LSWrappers.copyAllApps() ?? []
+			guard let paths = LSWrappers.copyAllApps() else { return nil }
 			let apps = concurrentMap(paths) { path -> Entry? in
 				guard let bundle = Bundle(path: path), let bundleID = bundle.bundleIdentifier,
-					  bundleID.caseInsensitiveCompare(AppRef.doNothingID) != .orderedSame,
+					  bundleID.caseInsensitiveCompare(DoNothingApp.bundleID) != .orderedSame,
 					  let declared = LSWrappers.copySchemesAndUTIsForApp(path) else { return nil }
 				let schemes = declared["URIs"]?.values.reduce(into: Set<String>()) { $0.formUnion($1) } ?? []
 				let types = declared["UTIs"]?.values.reduce(into: Set<String>()) { $0.formUnion($1) } ?? []
@@ -157,7 +154,7 @@ enum Catalog {
 			ids = LSWrappers.Schemes.copyAllHandlers(content, asPath: false) ?? []
 			current = LSWrappers.Schemes.copyDefaultHandler(content, asPath: false)
 		} else {
-			ids = LSWrappers.UTType.copyAllHandlers(content, inRoles: role.mask, asPath: false) ?? []
+			ids = LSWrappers.UTIs.copyAllHandlers(content, inRoles: role.mask, asPath: false) ?? []
 			current = defaultHandler(forType: content, role: role)
 		}
 		var seen = Set<String>()
@@ -169,7 +166,7 @@ enum Catalog {
 	}
 
 	static func defaultHandler(forType identifier: String, role: Role = .all) -> String? {
-		LSWrappers.UTType.copyDefaultHandler(identifier, inRoles: role.queryMask, asPath: false)
+		LSWrappers.UTIs.copyDefaultHandler(identifier, inRoles: role.mask, asPath: false)
 	}
 
 	/** Default handler of each UTI, keyed by UTI; UTIs without one are omitted. */
@@ -203,18 +200,36 @@ enum Catalog {
 	/** Order of kind groups in the sidebar. */
 	static let kindOrder: [String] = kinds.map(\.0) + ["Other"]
 
-	/** Sets the default handler. Returns an error message, or nil on success. */
-	static func setDefault(_ bundleID: String, for content: String, isScheme: Bool, role: Role = .all) -> String? {
-		let status = isScheme
-			? LSWrappers.Schemes.setDefaultHandler(content, bundleID)
-			: LSWrappers.UTType.setDefaultHandler(content, bundleID, role.mask)
-		return status == 0 ? nil : LSWrappers.LSErrors(value: status).print(argument: (app: bundleID, content: content))
+	/**
+	Sets the default handler and waits for macOS to say it is done, which can mean waiting for the user to answer a
+	confirmation. Canceling it arrives as `.canceled`. A change of one role alone is made by a function that answers at once,
+	so `settledDefault` is what waits for that.
+	*/
+	static func setDefault(_ bundleID: String, for content: String, isScheme: Bool, role: Role = .all) async -> Result<Void, LSWrappers.LSErrors> {
+		let app: LSWrappers.ResolvedApp
+		switch LSWrappers.resolveApp(bundleID) {
+		case .failure(let error): return .failure(error)
+		case .success(let resolved): app = resolved
+		}
+		// `awaitCompletion` blocks its thread, so it gets one of its own rather than one of the cooperative pool's.
+		return await withCheckedContinuation { continuation in
+			DispatchQueue.global(qos: .userInitiated).async {
+				continuation.resume(returning: LSWrappers.awaitCompletion { completion in
+					// The system can ask the user to confirm, so the request is made from the main thread, where the app's windows are.
+					DispatchQueue.main.async {
+						if isScheme { LSWrappers.Schemes.setDefaultHandler(content, app, completion: completion) }
+						else { LSWrappers.UTIs.setDefaultHandler(content, app, role.mask, completion: completion) }
+					}
+				})
+			}
+		}
 	}
 
 	/**
-	Waits until a default change requested with `setDefault` has really taken effect and returns the handler
-	actually in place. Launch Services applies changes asynchronously, and some of them (the default web
-	browser, for instance) only after the user confirms a CoreServicesUIAgent prompt, which they may decline.
+	Waits until a default change has really taken effect, and returns the handler actually in place. The per-role functions
+	return before macOS has applied the change, and give no way to find out when it has, or whether the user canceled a
+	confirmation. `setDefault` does wait for a change of all roles, but a read can still trail it by a moment. Either way this
+	returns at once when the handler is already the target.
 	*/
 	static func settledDefault(for content: String, isScheme: Bool, role: Role = .all, target: String) async -> (handler: String?, prompted: Bool) {
 		func current() -> String? {

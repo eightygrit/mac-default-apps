@@ -1,5 +1,4 @@
-ANNOUNCEMENT: I have recently noticed Apple has introduced replacements for the deprecated APIs used in this app. As a result, slow as it may be, I plan to resume development. I will be taking PRs as well, if somebody wishes to contribute.
-========
+> **Status:** Apple has introduced replacements for the deprecated Launch Services APIs this app used, and the app and `swda` now use them wherever a replacement exists. The Viewer, Editor and Shell roles have none, so a request for one role alone still uses the old per-role functions, looked up at run time so that their removal cannot stop the app from launching. Reading was checked on macOS 15. **Changing a default through the new calls has not been tested yet on any version of macOS** (`Tests/write-roundtrip.sh` exists for that). See [How it works with macOS](#how-it-works-with-macos).
 
 SwiftDefaultApps
 ========
@@ -15,7 +14,7 @@ Feel free to contribute, comment or report issues at https://github.com/Lord-Kam
 * Drag `SwiftDefaultApps.app` to Applications, then open it from Finder or Spotlight.
 * To uninstall, quit SwiftDefaultApps and move the app to the Trash.
 
-The app requires macOS 13 or later and supports both Apple Silicon and Intel Macs.
+The app requires macOS 13 or later and supports both Apple Silicon and Intel Macs. The `swda` command line tool requires macOS 12 or later.
 
 ## Installing with brew
 
@@ -55,13 +54,20 @@ Search matches names, identifiers, bundle IDs and file extensions (type `.md` on
 
 The Applications tab lists every scheme and type an application declares. Launch Services cannot clear a default, only replace it, so rows the application already owns offer a menu to hand them to another application, and the other rows offer "Make Default".
 
-Some changes, such as the default web browser, only take effect once you confirm a system prompt. The app waits for Launch Services to report the new handler (or for the prompt to be declined) and shows the handler actually in place.
+macOS can ask you to confirm a change, such as the default web browser. For a URL scheme, or for the **Open With** picker, the app shows a waiting indicator until you answer. If you cancel, that is not reported as an error and the picker goes back to what it was; if nothing has happened after two minutes, the app reports that it timed out. (If a confirmation is still on screen then and you answer it later, the change happens, but the app shows it only once you select the item again.) The Viewer, Editor and Shell pickers change one role with a function that answers at once, so for those the app watches for the new handler for up to three seconds (until you have answered, if a confirmation appears). After a change that macOS reported as done, the app reads the handler back, and says so if it is not the one you chose.
 
-The app uses the deprecated Launch Services calls `LSSetDefaultHandlerForURLScheme` and `LSSetDefaultRoleHandlerForContentType`, and the private `_LSCopySchemesAndHandlerURLs` SPI, to read and write handler associations.
+### How it works with macOS
+
+- Reading and changing the default application for a URL scheme, or for a file type when the role is All (the **Open With** picker in the app, and `swda` without `--role`), use `NSWorkspace`: `urlForApplication(toOpen:)`, `urlsForApplications(toOpen:)` and `setDefaultApplication(at:…)`. They replace the deprecated scheme getters `LSCopyDefaultHandlerForURLScheme` and `LSCopyAllHandlersForURLScheme`, the scheme setter `LSSetDefaultHandlerForURLScheme`, which Apple has marked as to be deprecated, and, for All roles, the per-role functions. They answer for whatever opens the file, so they know no roles.
+- The **Viewer**, **Editor** and **Shell** pickers (and `swda --role Viewer|Editor|Shell`) have no replacement. They use `LSCopyDefaultRoleHandlerForContentType`, `LSCopyAllRoleHandlersForContentType` and `LSSetDefaultRoleHandlerForContentType`, which Apple has marked as to be deprecated. `LSLegacyRoles.swift` is the only file that names them, and it looks them up at run time. They answer at once, so a change of one role does not wait for a confirmation. If a later macOS removes them, the app offers only the **Open With** picker and `swda` refuses `--role Viewer|Editor|Shell`. Set `SWDA_NO_LEGACY_ROLES=1` to see that today.
+- No public API lists every URL scheme, application or declared file type, so the lists in the app and `swda getSchemes`, `getApps` and `getUTIs` use three private functions: `_LSCopySchemesAndHandlerURLs`, `_LSCopyAllApplicationURLs` and `_UTCopyDeclaredTypeIdentifiers`. `LSPrivate.swift` is the only file that names them, and it looks them up at run time too. If one is missing, `swda` says that it could not generate the list, and the app shows an empty list and an alert.
+- The reason for looking functions up at run time: a program built for macOS 12 or later binds every function it links when it starts, and is stopped there if one has been removed from the system, even if it never calls it.
+
+For a URL scheme or for All roles, `swda setHandler` waits up to two minutes for you to answer a confirmation, and says so if you cancel. A single role is changed at once: `swda` reports success as soon as Launch Services accepts the request. `Tests/README.md` describes how all of this is checked, including the one script that really changes your defaults and puts back what it can.
 
 ## How to use the "Do Nothing" app
 
-SwiftDefaultApps automatically locates and launches the embedded **Do Nothing** app when it needs to register it with Launch Services. To launch it manually after installing with `build.sh`, run:
+SwiftDefaultApps automatically locates the embedded **Do Nothing** app and registers it with Launch Services when it needs it. If Do Nothing is ever reported as not found, launch it once by hand. After installing with `build.sh`, run:
 
 ```bash
 open "$HOME/Applications/SwiftDefaultApps.app/Contents/Resources/ThisAppDoesNothing.app"
@@ -76,7 +82,7 @@ The user-interface should be pretty self-explanatory; but, there are some things
 	
 - Selecting any URI Scheme or File type (always represented by a UTI), will give you a list of all valid applications for each LaunchServices role. This data is generated by LaunchServices itself.
   - There's two additional options: 
-    - One of them is **"Do Nothing"**, what this does is register the item to be handled by a dummy application which basically does nothing. Its only function is being able to open any URI Scheme or UTI whatsoever, printing a line to the console (specifying whatever it was that launched it) and immediately quitting. By default this application should be located in the `Resources` folder inside the app bundle; SwiftDefaultApps will, however, also look for it in the directory it is itself located in (for the CLI version) and every `Applications`folder in the computer.
+    - One of them is **"Do Nothing"**, what this does is register the item to be handled by an application which basically does nothing. Its only function is being able to open any URI Scheme or UTI whatsoever, printing a line to the console (specifying whatever it was that launched it) and immediately quitting. By default this application should be located in the `Resources` folder inside the app bundle; SwiftDefaultApps will, however, also look for it in the directory it is itself located in (for the CLI version) and every `Applications`folder in the computer.
     - The second is **"Other..."**, which obviously will allow you to select an application not in the list; with a caveat. In recent versions of macOS, the LaunchServices have become quite a bit smarter under the hood than they used to be. In practice, what this means is that although you can choose *any* application to handle anything, only valid associations will be preserved, as the LaunchServices is permanently looking for invalid or stale associations and removing them.
   - One final note: In the URI Schemes tab, you have the option of adding a custom URI Scheme (Removing them on demand is neither possible nor necessary, due to the same thing explained above). This options is provided for completeness' sake; you should virtually never need to use it, since Launch Services should be able to properly detect any valid URL Handlers. As a further cautionary note: If you add a custom URI Scheme when it is not needed, you may not be able to remove it except by uninstalling and reinstalling SwiftDefaultApps. Why? Because new schemes are by default associated to *"Do Nothing", which means Launch Services will always find a valid handler as long as SwiftDefaultApps is installed.
 
@@ -118,6 +124,27 @@ See https://github.com/Lord-Kamina/SwiftDefaultApps/issues
 - Localizations
 
 # Release Notes
+
+## [Unreleased]
+  + ### Added
+    + CLI: `--extension` / `--ext` for `getHandler` and `setHandler`, by huybik ([#94](https://github.com/Lord-Kamina/SwiftDefaultApps/pull/94)).
+    + A `.gitignore` for Xcode user data, by barijaona ([#87](https://github.com/Lord-Kamina/SwiftDefaultApps/pull/87)).
+    + `Tests/`: golden-output, logic and probe scripts, and a guarded script that really changes defaults and puts back what it can. See `Tests/README.md`.
+    + `SWDA_NO_LEGACY_ROLES=1` makes the app and `swda` behave as if macOS no longer had the per-role functions.
+  + ### Changed
+    + The preference pane is replaced by a standalone app (SwiftUI, macOS 13 or later), by ultranity ([#98](https://github.com/Lord-Kamina/SwiftDefaultApps/pull/98)).
+    + Deprecated functions and methods (the Launch Services scheme functions, the `UTType…` C functions, `NSWorkspace.fullPath(forApplication:)` and others) are replaced with `NSWorkspace` and `UniformTypeIdentifiers` equivalents wherever one exists. The per-role functions and the three private ones are looked up at run time instead of being linked, so that the removal of one can no longer stop the program from launching.
+    + Changing a default for a URL scheme or for All roles waits for macOS to answer, which can mean waiting for you to confirm. Canceling is reported as canceled, not as a success or a failure; `swda` waits up to two minutes. After a change the app reads the handler back, and says so if it is not the one you chose.
+    + A request for All roles (the app's **Open With** picker, `swda getHandler` without `--role`, `getUTIs`) now reports what actually opens a file. On the Mac this was checked on, applications whose role for a type is "None" no longer appear in `--all` lists, and Terminal is shown for the Mach-O, X11 and shell-script types, where nothing or iTerm was shown before. `getHandler --URL file --all` lists the applications that open a file URL. `getUTIs` no longer lists `public.presentation` and `public.spreadsheet`.
+    + `setHandler` refuses a UTI that macOS does not know, for every role, instead of recording a preference for it.
+    + A missing Do Nothing application is now reported before anything is changed (standard error, exit status 1).
+    + Do Nothing is registered with `LSRegisterURL` instead of being launched. This has not been tried on a Mac where it was not registered yet; if it is reported as not found, launch it once by hand (see [How to use the "Do Nothing" app](#how-to-use-the-do-nothing-app)).
+    + An application given by display name is found by matching the registered applications' file names, because `NSWorkspace.fullPath(forApplication:)` is deprecated and has no replacement.
+    + New messages for a canceled change, a change macOS did not allow and a change that timed out. An error that macOS reports and nothing here explains is logged with macOS's own description.
+  + ### Fixed
+    + A crash in the error messages when no application name was available.
+    + The Do Nothing application no longer treats the URL it was started for as a format string when logging it.
+    + Typo "succesfully" in the success message ([#21](https://github.com/Lord-Kamina/SwiftDefaultApps/issues/21)).
 
 ## [2.0.1] - 2019-07-26
   + ### Fixed

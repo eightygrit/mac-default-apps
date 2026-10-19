@@ -8,6 +8,7 @@
  */
 
 import Cocoa
+import UniformTypeIdentifiers
 
 @NSApplicationMain
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -16,16 +17,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func handleGetURLEvent(_ event: NSAppleEventDescriptor!, withReplyEvent: NSAppleEventDescriptor!) {
         let urlPassed = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))!.stringValue!
-        NSLog("Dummy application launched in response to URL: \(urlPassed), will now exit.")
+        NSLog("Dummy application launched in response to URL: %@, will now exit.", urlPassed)
     }
     
     @objc func handleOpenEvent(_ event: NSAppleEventDescriptor!, withReplyEvent: NSAppleEventDescriptor!) {
         let documentPassed = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))!.stringValue!
-        guard let documentType =  try? NSWorkspace.shared.type(ofFile: URL(string:documentPassed)!.path) else {
+        let documentURL = URL(fileURLWithPath: URL(string:documentPassed)!.path)
+        guard let documentType = (try? documentURL.resourceValues(forKeys: [.contentTypeKey]))?.contentType?.identifier else {
             NSLog("Dummy application launched in response to file with unknown type, will now exit.")
             return
         }
-        NSLog("Dummy application launched in response to file of type: \(documentType), will now exit.")
+        NSLog("Dummy application launched in response to file of type: %@, will now exit.", documentType)
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {

@@ -44,7 +44,13 @@ private struct ContentDetail: View {
 	@State private var pending: Set<Role> = []
 
 	private var isScheme: Bool { entry.kind == .scheme }
-	private var roles: [Role] { isScheme ? [.all] : Role.allCases }
+	/** Roles that can be told apart: only "All Roles" when the system no longer has the per-role functions. */
+	private var roles: [Role] { isScheme || !LSLegacyRoles.isAvailable ? [.all] : Role.allCases }
+	private var footer: String {
+		if isScheme { return "Links using \(entry.id): open in this application." }
+		let all = "Applies to every role, like “Change All…” in Finder’s Get Info."
+		return LSLegacyRoles.isAvailable ? all : "\(all) \(LSLegacyRoles.unavailableMessage)"
+	}
 
 	var body: some View {
 		Form {
@@ -54,11 +60,9 @@ private struct ContentDetail: View {
 			Section {
 				picker(for: .all, label: "Open With")
 			} footer: {
-				Text(isScheme
-					 ? "Links using \(entry.id): open in this application."
-					 : "Applies to every role, like “Change All…” in Finder’s Get Info.")
+				Text(footer)
 			}
-			if !isScheme {
+			if roles.count > 1 {
 				Section("Per-Role Defaults") {
 					ForEach([Role.viewer, .editor, .shell]) { picker(for: $0, label: $0.rawValue) }
 				}
@@ -89,18 +93,21 @@ private struct ContentDetail: View {
 	}
 
 	private func choose(_ bundleID: String, role: Role) {
-		if let error = Catalog.setDefault(bundleID, for: entry.id, isScheme: isScheme, role: role) {
-			model.errorMessage = error
-			return
-		}
 		pending.insert(role)
 		let content = entry.id, isScheme = isScheme
 		Task {
-			let result = await Catalog.settledDefault(for: content, isScheme: isScheme, role: role, target: bundleID)
-			// Re-read every role: "All Roles" changes them all, and a declined prompt changes none.
+			let result = await Catalog.setDefault(bundleID, for: content, isScheme: isScheme, role: role)
+			let succeeded = model.report(result, app: bundleID, content: content)
+			var prompted = false
+			if succeeded {
+				// A single role is changed by a function that does not wait for macOS, or for the user, and a read can trail even
+				// a change macOS has reported: give the new handler a moment to show up before saying that it did not.
+				prompted = await Catalog.settledDefault(for: content, isScheme: isScheme, role: role, target: bundleID).prompted
+			}
+			// Re-read every role: "All Roles" changes them all, and a canceled prompt changes none.
 			await reload(roles)
 			pending.remove(role)
-			if !result.prompted, result.handler?.caseInsensitiveCompare(bundleID) != .orderedSame {
+			if succeeded, !prompted, states[role]?.isCurrent(bundleID) != true {
 				model.errorMessage = "Launch Services did not apply the change for \(content)."
 			}
 		}
@@ -118,7 +125,7 @@ private struct HandlerPicker: View {
 
 	private var currentTag: String {
 		guard let current = state.current else { return "" }
-		guard !state.isCurrent(AppRef.doNothingID) else { return AppRef.doNothingID }
+		guard !state.isCurrent(DoNothingApp.bundleID) else { return DoNothingApp.bundleID }
 		return state.candidates.first { $0.id.caseInsensitiveCompare(current) == .orderedSame }?.id ?? ""
 	}
 
@@ -132,7 +139,7 @@ private struct HandlerPicker: View {
 					.tag(app.id)
 			}
 			Divider()
-			Text("Do Nothing").tag(AppRef.doNothingID)
+			Text(DoNothingApp.displayName).tag(DoNothingApp.bundleID)
 			Text("Other…").tag(Self.otherTag)
 		}
 	}
@@ -221,14 +228,16 @@ private struct AppDetail: View {
 	}
 
 	private func choose(_ bundleID: String, for claim: Claim) {
-		if let error = Catalog.setDefault(bundleID, for: claim.id, isScheme: claim.isScheme) {
-			model.errorMessage = error
-			return
-		}
 		pending.insert(claim.key)
 		let appID = entry.id
 		Task {
-			let result = await Catalog.settledDefault(for: claim.id, isScheme: claim.isScheme, target: bundleID)
+			let result = await Catalog.setDefault(bundleID, for: claim.id, isScheme: claim.isScheme)
+			let succeeded = model.report(result, app: bundleID, content: claim.id)
+			var prompted = false
+			if succeeded {
+				// Same as for a single role above: a read can trail a change macOS has reported.
+				prompted = await Catalog.settledDefault(for: claim.id, isScheme: claim.isScheme, target: bundleID).prompted
+			}
 			let handlers = await Task.detached(priority: .userInitiated) {
 				Catalog.handlers(for: claim.id, isScheme: claim.isScheme)
 			}.value
@@ -239,7 +248,7 @@ private struct AppDetail: View {
 			}
 			pending.remove(claim.key)
 			if !claim.isScheme { model.defaultChanged(forType: claim.id, to: handlers.current) }
-			if !result.prompted, !handlers.isCurrent(bundleID) {
+			if succeeded, !prompted, !handlers.isCurrent(bundleID) {
 				model.errorMessage = "Launch Services did not apply the change for \(claim.id)."
 			}
 		}
@@ -248,7 +257,7 @@ private struct AppDetail: View {
 	private nonisolated static func loadClaims(_ bundleID: String, _ declarations: AppDeclarations) -> [Claim] {
 		let schemes = Catalog.concurrentMap(declarations.schemes) { scheme -> Claim in
 			let handlers = Catalog.handlers(for: scheme, isScheme: true)
-			return Claim(id: scheme, title: "\(scheme):", subtitle: LSWrappers.Schemes.getNameForScheme(scheme) ?? "",
+			return Claim(id: scheme, title: "\(scheme):", subtitle: LSWrappers.Schemes.copyNameForScheme(scheme) ?? "",
 						 isScheme: true, handlers: handlers, isDefault: handlers.isCurrent(bundleID))
 		}
 		let types = Catalog.concurrentMap(declarations.types) { identifier -> Claim in
@@ -276,7 +285,7 @@ private struct ClaimRow: View {
 
 	private var currentName: String? {
 		guard let current = claim.handlers.current else { return nil }
-		if claim.handlers.isCurrent(AppRef.doNothingID) { return "Do Nothing" }
+		if claim.handlers.isCurrent(DoNothingApp.bundleID) { return DoNothingApp.displayName }
 		return claim.handlers.candidates.first { $0.id.caseInsensitiveCompare(current) == .orderedSame }?.name ?? current
 	}
 

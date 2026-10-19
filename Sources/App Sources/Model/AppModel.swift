@@ -36,7 +36,10 @@ final class AppModel: ObservableObject {
 	@Published var typeGrouping: TypeGrouping = .none {
 		didSet { refresh() }
 	}
+	/** What the alert says could not be done, and `errorMessage` why. It goes back to `defaultErrorTitle` when the alert is dismissed. */
+	@Published var errorTitle = AppModel.defaultErrorTitle
 	@Published var errorMessage: String?
+	static let defaultErrorTitle = "Couldn't Change the Default Application"
 	/** Current list, filtered, ranked and grouped. */
 	@Published private(set) var sections: [EntrySection] = []
 	/** Bumped whenever `sections` or the collapsed groups change, so the list view knows to reload. */
@@ -133,20 +136,24 @@ final class AppModel: ObservableObject {
 		loading.insert(category)
 		Task.detached(priority: .userInitiated) {
 			let result = Catalog.load(category)
-			let handlers = category == .types ? Catalog.defaultHandlers(forTypes: result.map(\.id)) : [:]
+			let handlers = category == .types ? Catalog.defaultHandlers(forTypes: (result ?? []).map(\.id)) : [:]
 			let apps = Dictionary(Set(handlers.values.map { $0.lowercased() }).compactMap { id in AppRef(bundleID: id).map { (id, $0) } },
 								  uniquingKeysWith: { a, _ in a })
 			await self.finishLoad(category, result, handlers: handlers, apps: apps)
 		}
 	}
 
-	private func finishLoad(_ category: Category, _ result: [Entry], handlers: [String: String], apps: [String: AppRef]) {
+	private func finishLoad(_ category: Category, _ result: [Entry]?, handlers: [String: String], apps: [String: AppRef]) {
 		if category == .types {
 			typeHandlers = handlers
 			self.apps = apps
 		}
-		entries[category] = result
+		entries[category] = result ?? []
 		loading.remove(category)
+		if result == nil {
+			errorTitle = "Couldn't Load \(category.rawValue)"
+			errorMessage = "The list of \(category.rawValue) is not available on this version of macOS."
+		}
 		if category == self.category { refresh() }
 	}
 
@@ -157,15 +164,30 @@ final class AppModel: ObservableObject {
 		selection = visibleEntries[min(max(current + offset, 0), visibleEntries.count - 1)].id
 	}
 
+	/**
+	Tells the user why a change of default failed. A change the user canceled is not worth a message.
+	- Returns: Whether the change succeeded.
+	*/
+	@discardableResult
+	func report(_ result: Result<Void, LSWrappers.LSErrors>, app: String, content: String) -> Bool {
+		switch result {
+		case .success: return true
+		case .failure(.canceled): return false
+		case .failure(let error):
+			errorMessage = error.print(argument: (app: app, content: content))
+			return false
+		}
+	}
+
 	/** Registers a custom URL scheme, handled by the bundled "do nothing" app until the user picks a real one. */
 	func addScheme(_ scheme: String) {
 		let scheme = scheme.trimmingCharacters(in: .whitespaces)
 		guard !scheme.isEmpty else { return }
-		if let error = Catalog.setDefault(AppRef.doNothingID, for: scheme, isScheme: true) {
-			errorMessage = error
-			return
+		Task {
+			let result = await Catalog.setDefault(DoNothingApp.bundleID, for: scheme, isScheme: true)
+			guard report(result, app: DoNothingApp.bundleID, content: scheme) else { return }
+			selections[.schemes] = scheme
+			load(.schemes, force: true)
 		}
-		selections[.schemes] = scheme
-		load(.schemes, force: true)
 	}
 }

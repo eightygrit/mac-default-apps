@@ -80,8 +80,6 @@ prefix func /(pattern:String) -> NSRegularExpression? {
 
 //// EXTENSIONS
 
-extension String: Error {}
-
 extension DispatchQueue {
 	static let labelPrefix = "io.zamzam.ZamzamKit"
 	static let database = DispatchQueue(label: "\(DispatchQueue.labelPrefix).database", qos: .utility)
@@ -152,7 +150,7 @@ extension Bundle {
 	- Parameter outError: Populated with an error-code if the bundle does not correspond to a valid package.
 	- Returns: The four-letter code specifying the bundle's package type, or `nil` if an error is encountered.
 	*/
-	func getType (outError: inout OSStatus) -> String? {
+	func copyType (outError: inout OSStatus) -> String? {
 		if let info = self.infoDictionary {
 			if let type = info["CFBundlePackageType"] {
 				return String(describing: type)
@@ -189,52 +187,15 @@ func areWeCLI() -> Bool {
 	return (Bundle.main.bundleIdentifier == nil)
 }
 
-/** 
-Display a modal alert
-- Parameter error: A numeric value indicating the error code as per LSWrappers.LSErrors.
-- Parameter arg1: String containing info pertaining to the error.
-- Parameter arg2: String containing info pertaining to the error. 
+/**
+Reports the outcome of a change of default handler on the command line, where every other answer goes: standard output.
+- Parameter result: What the change returned.
+- Parameter app: The application the user asked for, as a bundle identifier or as typed.
+- Parameter content: The URI Scheme or UTI the change was for.
 */
-func displayAlert(error: OSStatus = Int32.min, arg1: String?, arg2: String?) throws {
-	if (error != 0 && (arg1 == nil || arg2 == nil)) { throw ("Arguments cannot be nil when displaying an error.") }
-	if (!areWeCLI()) {
-		let alert = NSAlert()
-		alert.icon = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
-		alert.addButton(withTitle: "OK")
-		if (error != Int32.min) {
-			alert.informativeText = LSWrappers.LSErrors(value: error).print(argument: (app: arg1, content: arg2))
-			
-			switch (Int(error)) {
-			case Int(errSecInvalidBundleInfo)..<0:
-				alert.messageText = "Error"
-				alert.alertStyle = .critical
-			case 0:
-				alert.messageText = "Success"
-				alert.alertStyle = .informational
-			case 1...:alert.messageText = "Success"
-			alert.alertStyle = .informational 
-			default:
-				alert.messageText = "Warning"
-				alert.alertStyle = .warning
-			}
-		}
-		else {
-			alert.informativeText = "SwiftDefaultApps ERROR: Called displayAlert() with an undefined error code."
-		}
-		DispatchQueue.main.async {
-			alert.runModal()
-		}
-	}
-	else {
-		if (error < 0) {
-			throw(LSWrappers.LSErrors.init(value: error).print(argument: (app: arg1, content: arg2)))
-		}
-		else if (error == 0) {
-			print(LSWrappers.LSErrors.init(value: error).print(argument: (app: arg1, content: arg2)))
-		}
-		else if (error == Int32.min) {
-			guard (arg1 != nil) else { throw("SwiftDefaultApps ERROR: Called displayAlert() with an undefined error code and message.") }
-			print(arg1!)
-		}
+func report(_ result: Result<Void, LSWrappers.LSErrors>, app: String?, content: String?) {
+	switch result {
+	case .success: print(LSWrappers.LSErrors.noError.print(argument: (app: app, content: content)))
+	case .failure(let error): print(error.print(argument: (app: app, content: content)))
 	}
 }

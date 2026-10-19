@@ -17,9 +17,8 @@ class SetCommand: OptionCommand {
 	let shortDescription = "Sets <application> as the default handler for a given <type>/<subtype> combination."
 	private var kind: String = ""
 	private var contentType: String? = nil
-	private var inApplication: String = "None"
-	private var bundleID: String? = nil
-	private var statusCode: OSStatus = kLSUnknownErr
+	private var inApplication: String = DoNothingApp.cliName
+	private var app: LSWrappers.ResolvedApp? = nil
 	private var roles: Dictionary = ["editor":LSRolesMask.editor,"viewer":LSRolesMask.viewer,"shell":LSRolesMask.shell,"all":LSRolesMask.all]
 	private var role: LSRolesMask = LSRolesMask.all
 	
@@ -59,7 +58,7 @@ class SetCommand: OptionCommand {
 			self.contentType = nil
 			self.kind = "news"
 		}
-		options.add(keys: ["--app", "--application"], usage: "The <application> to register as default handler. Specifying \"None\" will remove the currently registered handler.", valueSignature: "application", group:"application") { [unowned self] (value) in
+		options.add(keys: ["--app", "--application"], usage: "The <application> to register as default handler. Specifying \"\(DoNothingApp.cliName)\" will remove the currently registered handler.", valueSignature: "application", group:"application") { [unowned self] (value) in
 			self.inApplication = value
 		}
 		options.add(keys: ["--role"], usage: "--role <Viewer|Editor|Shell|All>, specifies the role with which to register the handler. Default is All.", valueSignature: "role") { [unowned self] (value) in
@@ -71,27 +70,33 @@ class SetCommand: OptionCommand {
 	}
 	
 	func execute(arguments: CommandArguments) throws  {
-		statusCode = LSWrappers.getBundleID(self.inApplication, outBundleID: &bundleID)
-		guard (statusCode == 0) else { throw CLIError.error(LSWrappers.LSErrors.init(value: statusCode).print(argument: (app: inApplication, content: self.contentType ?? self.kind))) }
+		if (kind == "UTI" || kind == "Extension") && !LSLegacyRoles.isAllRoles(role) && !LSLegacyRoles.isAvailable {
+			throw CLIError.error("SwiftDefaultApps ERROR: \(LSLegacyRoles.unavailableMessage)")
+		}
+		switch LSWrappers.resolveApp(self.inApplication) {
+		case .failure(let error): throw CLIError.error(error.print(argument: (app: inApplication, content: self.contentType ?? self.kind)))
+		case .success(let resolved): app = resolved
+		}
+		var result: Result<Void, LSWrappers.LSErrors> = .failure(.defaultErr)
 		switch(kind) {
 		case "UTI","Extension","URL":
 			if let contentString = self.contentType {
-				let content = (kind == "Extension") ? LSWrappers.UTType.copyUTIForExtension(contentString) : contentString
+				let content = (kind == "Extension") ? LSWrappers.UTIs.copyUTIForExtension(contentString) : contentString
 				guard let contentUTI = content else { throw CLIError.error("SwiftDefaultApps ERROR: Could not resolve \(contentString) to a UTI.") }
-				statusCode = ((kind == "URL") ? LSWrappers.Schemes.setDefaultHandler(contentUTI, bundleID!) : LSWrappers.UTType.setDefaultHandler(contentUTI, bundleID!, self.role))
+				result = LSWrappers.awaitCompletion { completion in
+					if (kind == "URL") { LSWrappers.Schemes.setDefaultHandler(contentUTI, app!, completion: completion) }
+					else { LSWrappers.UTIs.setDefaultHandler(contentUTI, app!, self.role, completion: completion) }
+				}
 				self.contentType = contentUTI
 			}
 			break
 		case "http","mailto","ftp","rss","news":
-			statusCode = LSWrappers.Schemes.setDefaultHandler(kind, bundleID!)
+			result = LSWrappers.awaitCompletion { LSWrappers.Schemes.setDefaultHandler(kind, app!, completion: $0) }
 			break
 			
 		default:
-			statusCode = kLSUnknownErr
 			break
 		}
-		do {
-			try displayAlert(error: statusCode, arg1: (bundleID != nil ? bundleID : inApplication), arg2: self.contentType ?? self.kind)
-		} catch { print(error) }
+		report(result, app: app?.bundleID ?? inApplication, content: self.contentType ?? self.kind)
 	}
 }

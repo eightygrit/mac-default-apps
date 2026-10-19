@@ -70,14 +70,17 @@ class ReadCommand: OptionCommand {
 	
 	func execute(arguments: CommandArguments) throws  {
 		
+		if (kind == "UTI" || kind == "Extension") && !LSLegacyRoles.isAllRoles(role) && !LSLegacyRoles.isAvailable {
+			throw CLIError.error("SwiftDefaultApps ERROR: \(LSLegacyRoles.unavailableMessage)")
+		}
 		switch(kind,getAll) {
 			
 		case ("UTI",true),("Extension",true),("URL",true):
 			
 			if let contentString = self.contentType {
-				let content = (kind == "Extension") ? LSWrappers.UTType.copyUTIForExtension(contentString) : contentString
+				let content = (kind == "Extension") ? LSWrappers.UTIs.copyUTIForExtension(contentString) : contentString
 				guard let contentUTI = content else { throw CLIError.error("SwiftDefaultApps ERROR: Could not resolve \(contentString) to a UTI.") }
-				handler = copyStringArrayAsString( ((kind == "URL") ? LSWrappers.Schemes.copyAllHandlers(contentUTI) : LSWrappers.UTType.copyAllHandlers(contentUTI, inRoles: role)) )
+				handler = copyStringArrayAsString( ((kind == "URL") ? LSWrappers.Schemes.copyAllHandlers(contentUTI) : LSWrappers.UTIs.copyAllHandlers(contentUTI, inRoles: role)) )
 				
 			}
 			break
@@ -85,9 +88,9 @@ class ReadCommand: OptionCommand {
 		case ("UTI",false),("Extension",false),("URL",false):
 			
 			if let contentString = self.contentType {
-				let content = (kind == "Extension") ? LSWrappers.UTType.copyUTIForExtension(contentString) : contentString
+				let content = (kind == "Extension") ? LSWrappers.UTIs.copyUTIForExtension(contentString) : contentString
 				guard let contentUTI = content else { throw CLIError.error("SwiftDefaultApps ERROR: Could not resolve \(contentString) to a UTI.") }
-				handler = ((kind == "URL") ? LSWrappers.Schemes.copyDefaultHandler(contentUTI) : LSWrappers.UTType.copyDefaultHandler(contentUTI, inRoles: role))
+				handler = ((kind == "URL") ? LSWrappers.Schemes.copyDefaultHandler(contentUTI) : LSWrappers.UTIs.copyDefaultHandler(contentUTI, inRoles: role))
 			}
 			break
 		case ("http",Bool()),("mailto",Bool()),("ftp",Bool()),("rss",Bool()),("news",Bool()):
