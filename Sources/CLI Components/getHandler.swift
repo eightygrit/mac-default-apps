@@ -19,7 +19,6 @@ class ReadCommand: OptionCommand {
 	private var getAll = false;
 	private var contentType: String? = nil
 	private var handler: String? = nil
-	private var roles: Dictionary = ["editor":LSRolesMask.editor,"viewer":LSRolesMask.viewer,"shell":LSRolesMask.shell,"all":LSRolesMask.all]
 	private var role: LSRolesMask = LSRolesMask.all
 	
 	func setupOptions(options: OptionRegistry) {
@@ -61,10 +60,7 @@ class ReadCommand: OptionCommand {
 			self.getAll = true
 		}
 		options.add(keys: ["--role"], usage: "--role <Viewer|Editor|Shell|All>, specifies the role with which to register the handler. Default is All.", valueSignature: "role") { [unowned self] (value) in
-			if let temp = self.roles[value.lowercased()] {
-				self.role = temp
-			}
-			else { self.role = [LSRolesMask.viewer,LSRolesMask.editor] }
+			self.role = LSLegacyRoles.mask(named: value) ?? [LSRolesMask.viewer,LSRolesMask.editor]
 		}
 	}
 	
@@ -90,12 +86,12 @@ class ReadCommand: OptionCommand {
 			if let contentString = self.contentType {
 				let content = (kind == "Extension") ? LSWrappers.UTIs.copyUTIForExtension(contentString) : contentString
 				guard let contentUTI = content else { throw CLIError.error("SwiftDefaultApps ERROR: Could not resolve \(contentString) to a UTI.") }
-				handler = ((kind == "URL") ? LSWrappers.Schemes.copyDefaultHandler(contentUTI) : LSWrappers.UTIs.copyDefaultHandler(contentUTI, inRoles: role))
+				handler = ((kind == "URL") ? LSWrappers.Schemes.copyDefaultHandler(contentUTI) : LSWrappers.UTIs.copyDefaultHandler(contentUTI, inRoles: role)).map(displayable)
 			}
 			break
 		case ("http",Bool()),("mailto",Bool()),("ftp",Bool()),("rss",Bool()),("news",Bool()):
 			
-			handler = LSWrappers.Schemes.copyDefaultHandler(kind)
+			handler = LSWrappers.Schemes.copyDefaultHandler(kind).map(displayable)
 			
 			break
 			

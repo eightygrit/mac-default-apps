@@ -30,6 +30,21 @@ enum LSLegacyRoles {
 	}
 
 	/**
+	The roles a name on the command line stands for.
+	- Parameter name: "Viewer", "Editor", "Shell" or "All", in any case.
+	- Returns: The matching mask, or nil for any other word.
+	*/
+	static func mask(named name: String) -> LSRolesMask? {
+		switch name.lowercased() {
+		case "viewer": return .viewer
+		case "editor": return .editor
+		case "shell": return .shell
+		case "all": return .all
+		default: return nil
+		}
+	}
+
+	/**
 	Whether a request is for All roles (`Role.all` in the app, `--role All` on the command line), which asks what opens the file
 	whatever the role. `NSWorkspace` answers that. Only a mask narrower than that, such as Viewer alone, needs the three functions below.
 	- Parameter roles: The roles a request is about.

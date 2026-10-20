@@ -36,7 +36,7 @@ func copyDictionaryAsString (_ inDict: [(key:String, value:String)]?) -> String?
 	if let temp = inDict {
 		
 		for (key, value) in temp {
-			output+=("\(key)\t\t\t\t\(value)\n")
+			output+=("\(displayable(key))\t\t\t\t\(displayable(value))\n")
 		}
 	}
 	else { return nil }
@@ -51,30 +51,39 @@ Creates a String representation of an Array of Strings.
 */
 func copyStringArrayAsString (_ inArray: Array<String>?, separator: String = "\n") -> String? {
 	if let temp = inArray {
-		return temp.joined(separator:separator)
+		return temp.map(displayable).joined(separator:separator)
 	}
 	else { return nil }
 }
 
-//// REGEX MATCHING CONVENIENCE OPERATORS.
-
-infix operator =~
-prefix operator /
-
-func =~ (string: String, regex: NSRegularExpression?) -> Bool? {
-	guard let matches = regex?.numberOfMatches(in:string,
-											   options: [],
-											   range: NSMakeRange(0, string.count))
-		else { return nil }
-	return matches > 0
+/**
+Whether a string is a well-formed URI Scheme: a letter, then letters, digits, "+", "-" or ".", all ASCII (RFC 3986).
+A scheme of one letter is valid. Nothing else is: not a trailing line break, not a combining mark, not an empty string.
+*/
+func isValidScheme (_ inScheme: String) -> Bool {
+	guard let first = inScheme.unicodeScalars.first, first.isASCII, first.properties.isAlphabetic else { return false }
+	return inScheme.unicodeScalars.allSatisfy { scalar in
+		scalar.isASCII && (scalar.properties.isAlphabetic || ("0"..."9").contains(Character(scalar)) || "+-.".unicodeScalars.contains(scalar))
+	}
 }
 
-prefix func /(pattern:String) -> NSRegularExpression? {
-	let options: NSRegularExpression.Options =
-		NSRegularExpression.Options.dotMatchesLineSeparators
-	guard let retval = try? NSRegularExpression(pattern:pattern,
-												options:options) else { return nil }
-	return retval
+/**
+Makes a string safe to print where a person or a script reads it. Launch Services hands us names, paths and identifiers that other applications wrote, and a terminal obeys the escape sequences, carriage returns and bidirectional controls among them.
+- Parameter inString: Any string.
+- Returns: The string with every control character, line or paragraph separator and invisible or bidirectional format character written as `\u{XXXX}`. Ordinary text, including emoji joiners, is unchanged.
+*/
+func displayable (_ inString: String) -> String {
+	let hidden: Set<UInt32> = [0x061C, 0x200B, 0x200E, 0x200F, 0x2060, 0xFEFF] // Arabic letter mark, zero-width space, left/right marks, word joiner, byte order mark.
+	var output = String.UnicodeScalarView()
+	for scalar in inString.unicodeScalars {
+		let category = scalar.properties.generalCategory
+		let isBidi = (0x202A...0x202E).contains(scalar.value) || (0x2066...0x2069).contains(scalar.value)
+		if category == .control || category == .lineSeparator || category == .paragraphSeparator || isBidi || hidden.contains(scalar.value) {
+			output.append(contentsOf: "\\u{\(String(scalar.value, radix: 16, uppercase: true))}".unicodeScalars)
+		}
+		else { output.append(scalar) }
+	}
+	return String(output)
 }
 
 

@@ -5,7 +5,7 @@ and the ones that compile Swift call `swiftc` directly (a test target would mean
 
 | Script | What it checks | Can it change your default handlers? |
 |---|---|---|
-| [`golden.sh`](golden.sh) | the CLI's output, error text and exit status in 365 cases | no |
+| [`golden.sh`](golden.sh) | the CLI's output, error text and exit status in 368 cases | no |
 | [`logic/run.sh`](logic/run.sh) | the shared sources: error codes and messages, which application an input means, refusals, helpers | no (reads Launch Services only) |
 | [`probe/run.sh`](probe/run.sh) `<name>` | facts about macOS the design rests on, mostly old calls against new ones | no |
 | [`probe/fixups.sh`](probe/fixups.sh) | why private and legacy symbols are looked up with `dlsym` | no |

@@ -322,7 +322,7 @@ class LSWrappers {
 		- completion: Called exactly once, on any queue, and before this function returns if the request is refused up front (malformed scheme, application not found).
 		*/
 		static func setDefaultHandler (_ inScheme: String, _ inApp: ResolvedApp, completion: @escaping (Result<Void, LSErrors>) -> Void) {
-			guard ((inScheme =~ /"\\A[a-zA-Z][a-zA-Z0-9.+-]+$") == true) else { completion(.failure(.invalidScheme)); return }
+			guard isValidScheme(inScheme) else { completion(.failure(.invalidScheme)); return }
 			guard LSWrappers.ensureRegistered(inApp) else { completion(.failure(.appNotFound)); return }
 			NSWorkspace.shared.setDefaultApplication(at: inApp.url, toOpenURLsWithScheme: inScheme) { completion(Result(error: $0)) }
 		}

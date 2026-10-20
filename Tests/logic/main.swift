@@ -211,25 +211,9 @@ lateReport?(.success(()))
 check("an operation that never reports and has no time", code(LSWrappers.awaitCompletion(timeout: 0) { _ in }), E.timedOut.rawValue)
 check("no error is success", code(Result(error: nil)), 0)
 check("an NSError is mapped", code(Result(error: NSError(domain: NSOSStatusErrorDomain, code: -128))), E.canceled.rawValue)
-// What an error that nothing explains leaves behind: the unknown error for the user, the system's own words in the log.
-func capturingStandardError(_ body: () -> Void) -> String {
-    let path = NSTemporaryDirectory() + "swda-logic-stderr-\(getpid())"
-    let saved = dup(2), file = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
-    dup2(file, 2)
-    body()
-    fflush(stderr)
-    dup2(saved, 2); close(saved); close(file)
-    defer { try? FileManager.default.removeItem(atPath: path) }
-    return (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-}
-var unexplained: Result<Void, E> = .success(())
-let logged = capturingStandardError {
-    unexplained = Result(error: NSError(domain: "org.example", code: 7, userInfo: [NSLocalizedDescriptionKey: "100% odd %@ %n"]))
-}
-check("an error nothing explains is the unknown error", code(unexplained), E.defaultErr.rawValue)
-check("its own words and codes are logged, untouched by formatting", logged.contains("100% odd %@ %n") && logged.contains("org.example 7"), true)
-check("an error that is explained logs nothing", capturingStandardError { _ = Result(error: NSError(domain: NSOSStatusErrorDomain, code: -128)) }.isEmpty, true)
-check("one of ours logs nothing either", capturingStandardError { _ = Result(error: E.defaultErr) }.isEmpty, true)
+// What macOS said about an error nothing explains goes to the unified log (os.Logger in LSWrappers.swift), which a test cannot
+// read cheaply; the user still gets the unknown error.
+check("an error nothing explains is the unknown error", code(Result(error: NSError(domain: "org.example", code: 7, userInfo: [NSLocalizedDescriptionKey: "100% odd %@ %n"]))), E.defaultErr.rawValue)
 
 // MARK: - Extension to UTI (PR #94)
 
@@ -371,8 +355,19 @@ check("convertAppURLsToPaths(nil)", convertAppURLsToPaths(nil), nil)
 check("copyStringArrayAsString", copyStringArrayAsString(["a", "b"]), "a\nb")
 check("copyStringArrayAsString with a separator", copyStringArrayAsString(["a", "b"], separator: ", "), "a, b")
 check("copyStringArrayAsString(nil)", copyStringArrayAsString(nil), nil)
-check("regex operator matches", "http" =~ /"\\Ahttp$", true)
-check("regex operator does not match", "ftp" =~ /"\\Ahttp$", false)
+for (scheme, valid) in [("http", true), ("x-apple.systempreferences", true), ("a", true), ("web+app", true), ("HTTP", true),
+                        ("http\n", false), ("http\u{0301}", false), ("", false), ("1bad", false), ("bad scheme", false), ("-x", false), ("sch\u{00E9}me", false), ("ht:tp", false)] {
+    check("isValidScheme(\(scheme.debugDescription))", isValidScheme(scheme), valid)
+}
+check("displayable leaves ordinary text alone", displayable("Visual Studio Code.app \u{1F469}\u{200D}\u{1F4BB} caf\u{00E9}"), "Visual Studio Code.app \u{1F469}\u{200D}\u{1F4BB} caf\u{00E9}")
+check("displayable writes an escape sequence out", displayable("a\u{1B}[2Jb"), "a\\u{1B}[2Jb")
+check("displayable writes a carriage return, a newline and a tab out", displayable("a\rb\nc\td"), "a\\u{D}b\\u{A}c\\u{9}d")
+check("displayable writes a bidirectional override out", displayable("gnp.\u{202E}exe"), "gnp.\\u{202E}exe")
+check("displayable writes a line separator and a zero-width space out", displayable("a\u{2028}b\u{200B}c"), "a\\u{2028}b\\u{200B}c")
+check("the list formatters use it", copyStringArrayAsString(["a\u{1B}b", "c"]), "a\\u{1B}b\nc")
+check("the dictionary formatter uses it", copyDictionaryAsString([(key: "k\u{1B}", value: "v\r")]), "k\\u{1B}\t\t\t\tv\\u{D}\n")
+check("role names", ["viewer", "EDITOR", "Shell", "all", "bogus", ""].map { LSLegacyRoles.mask(named: $0)?.rawValue },
+      [LSRolesMask.viewer.rawValue, LSRolesMask.editor.rawValue, LSRolesMask.shell.rawValue, LSRolesMask.all.rawValue, nil, nil])
 check("a program without a bundle identifier is the CLI", areWeCLI(), true)
 
 print("\(checks - failures) of \(checks) checks passed" + (failures == 0 ? "" : ", \(failures) FAILED"))

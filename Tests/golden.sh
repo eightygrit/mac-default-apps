@@ -98,4 +98,8 @@ run getHandler --extension pdf --UTI public.html
 run setHandler --extension pdf
 run setHandler --extension pdf --app NoSuchAppAnywhere
 run setHandler --extension "" --app NoSuchAppAnywhere
+# An option longer than 40 characters used to trap in SwiftCLI; an unknown role is refused before anything else
+run getHandler "--URL=$(printf 'x%.0s' {1..45})"
+run setHandler --UTI public.html --app NoSuchAppAnywhere --role Vieewer
+run setHandler --UTI public.html --app NoSuchAppAnywhere --role viewer
 echo "wrote $n cases to $OUT"

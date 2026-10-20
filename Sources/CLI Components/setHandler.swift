@@ -19,7 +19,7 @@ class SetCommand: OptionCommand {
 	private var contentType: String? = nil
 	private var inApplication: String = DoNothingApp.cliName
 	private var app: LSWrappers.ResolvedApp? = nil
-	private var roles: Dictionary = ["editor":LSRolesMask.editor,"viewer":LSRolesMask.viewer,"shell":LSRolesMask.shell,"all":LSRolesMask.all]
+	private var unknownRole: String? = nil
 	private var role: LSRolesMask = LSRolesMask.all
 	
 	func setupOptions(options: OptionRegistry) {
@@ -58,18 +58,20 @@ class SetCommand: OptionCommand {
 			self.contentType = nil
 			self.kind = "news"
 		}
-		options.add(keys: ["--app", "--application"], usage: "The <application> to register as default handler. Specifying \"\(DoNothingApp.cliName)\" will remove the currently registered handler.", valueSignature: "application", group:"application") { [unowned self] (value) in
+		options.add(keys: ["--app", "--application"], usage: "The <application> to register as default handler. Specifying \"\(DoNothingApp.cliName)\" assigns Do Nothing, an application that ignores whatever it is asked to open.", valueSignature: "application", group:"application") { [unowned self] (value) in
 			self.inApplication = value
 		}
 		options.add(keys: ["--role"], usage: "--role <Viewer|Editor|Shell|All>, specifies the role with which to register the handler. Default is All.", valueSignature: "role") { [unowned self] (value) in
-			if let temp = self.roles[value.lowercased()] {
-				self.role = temp
-			}
-			else { self.role = LSRolesMask.all }
+			// A word that is not a role is refused in execute(): widening a write to every role because of a typo would be wrong.
+			if let temp = LSLegacyRoles.mask(named: value) { self.role = temp; self.unknownRole = nil }
+			else { self.unknownRole = value }
 		}
 	}
 	
 	func execute(arguments: CommandArguments) throws  {
+		if let unknownRole = unknownRole {
+			throw CLIError.error("SwiftDefaultApps ERROR: \(displayable(unknownRole)) is not a role. Use Viewer, Editor, Shell or All.")
+		}
 		if (kind == "UTI" || kind == "Extension") && !LSLegacyRoles.isAllRoles(role) && !LSLegacyRoles.isAvailable {
 			throw CLIError.error("SwiftDefaultApps ERROR: \(LSLegacyRoles.unavailableMessage)")
 		}
