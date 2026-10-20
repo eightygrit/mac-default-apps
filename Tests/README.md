@@ -8,7 +8,8 @@ and the ones that compile Swift call `swiftc` directly (a test target would mean
 | [`golden.sh`](golden.sh) | the CLI's output, error text and exit status in 368 cases, compared build against build | no |
 | [`contract.sh`](contract.sh) `<swda>` | the 25 of those cases that read the same on every Mac, compared with the recordings in [`contract/`](contract) | no |
 | [`logic/run.sh`](logic/run.sh) | the shared sources: error codes and messages, which application an input means, planted look-alikes, what each setter asks the system for, refusals, helpers | no (reads Launch Services only; a stand-in replaces the calls that write) |
-| [`mutations.sh`](mutations.sh) | that the logic tests notice 25 deliberate breaks of the shared sources (a role widened, a guard dropped, a look-alike ranked first) | no (works in a scratch copy) |
+| [`model/run.sh`](model/run.sh) | the app's model, without a window: grouping and collapsing, the custom-scheme field, and the one place a default is changed (what is refused, shown while it waits, said when it did not take effect) | no (every change goes through a stand-in) |
+| [`mutations.sh`](mutations.sh) | that the logic and model tests notice 35 deliberate breaks (a role widened, a guard dropped, a look-alike ranked first, a collapsed group hiding another list) | no (works in a scratch copy) |
 | [`check-artifacts.sh`](check-artifacts.sh) `<program>...` | what the built programs link to: no deprecated or private Launch Services function, no networking | no |
 | [`probe/run.sh`](probe/run.sh) `<name>` | facts about macOS the design rests on, mostly old calls against new ones | no |
 | [`probe/fixups.sh`](probe/fixups.sh) | why private and legacy symbols are looked up with `dlsym` | no |
@@ -75,6 +76,19 @@ function the program uses. And `mutations.sh` breaks the sources on purpose, one
 break has to make the logic tests fail, so a check that stops guarding anything shows up as a survivor. Add a row to its
 table when a new rule is worth protecting.
 
+## Model tests
+
+```bash
+Tests/model/run.sh               # failures and a summary
+VERBOSE=1 Tests/model/run.sh     # every check
+```
+
+`model/main.swift` compiles the app's `AppModel` and `Catalog` with the shared sources, without the views or a window. The
+model takes the three things it asks of the system when it changes a default (`Catalog.HandlerAccess`: change it, wait until it
+took effect, read it again) as a parameter, so the checks pass a stand-in that answers as told and can hold a change open: that is
+how "a second change is refused while the first waits" and "a reading that began before a change is dropped" are checked. The
+views are not compiled; what they show is a function of the model, and what they do with a click is one call of it.
+
 ## Without the per-role functions
 
 The three functions that read and write the handler of one role (`LSLegacyRoles.swift`) are the part of the design
@@ -125,7 +139,7 @@ builds can be compared with `diff`; `FAIL_ON_WARNINGS=1` turns any warning into 
 ## CI
 
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs, on every push and pull request, the logic tests, the
-mutation check, the three scratch builds with warnings fatal, `check-artifacts.sh` on what they built, `contract.sh`
+mutation check, the model tests, the three scratch builds with warnings fatal, `check-artifacts.sh` on what they built, `contract.sh`
 and `legacy-roles-off.sh`. It never writes a default handler. Everything in it can be run locally with the commands above.
 
 ## Writes (guarded)

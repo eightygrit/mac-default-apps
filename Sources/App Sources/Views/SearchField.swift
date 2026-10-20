@@ -41,6 +41,11 @@ struct SearchField: NSViewRepresentable {
 			parent.text = field.stringValue
 		}
 
+		/** The clear button empties the field without telling `controlTextDidChange`, so the list would stay filtered. */
+		func searchFieldDidEndSearching(_ sender: NSSearchField) {
+			parent.text = sender.stringValue
+		}
+
 		func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
 			switch selector {
 			case #selector(NSResponder.moveUp(_:)): parent.onMove(-1); return true

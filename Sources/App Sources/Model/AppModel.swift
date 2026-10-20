@@ -15,13 +15,27 @@ enum TypeGrouping: String, CaseIterable, Identifiable {
 	var id: Self { self }
 }
 
-/** A titled run of sidebar rows; the title is nil when the list is not grouped. */
+/** A titled run of sidebar rows; the title is nil when the list is not grouped, and then the run cannot be collapsed. */
 struct EntrySection: Identifiable {
 	let id: String
 	let title: String?
-	/** Application whose icon decorates the header, when grouping by default app. */
-	let app: AppRef?
+	/** Where the application is whose icon decorates the header, when grouping by default app. */
+	let iconPath: String?
 	let entries: [Entry]
+}
+
+/** How a change of a default ended. */
+enum ChangeOutcome: Equatable {
+	/** The handler is the one that was asked for. */
+	case applied
+	/** The user said no to the confirmation macOS asked for, or it was dismissed. */
+	case canceled
+	/** macOS or this program refused; the alert says why. */
+	case failed
+	/** macOS reported success and the handler is not the one that was asked for; the alert says so. */
+	case notApplied
+	/** A change of the same scheme or type was already waiting, so nothing was asked. */
+	case ignored
 }
 
 /** UI state of the app: the loaded lists, the search query and the selection of each category. */
@@ -48,12 +62,24 @@ final class AppModel: ObservableObject {
 	@Published private(set) var visibleEntries: [Entry] = []
 	@Published private var selections: [Category: Entry.ID] = [:]
 
+	/** Schemes and types with a change awaiting macOS, or the user's answer to its confirmation. */
+	@Published private(set) var changing: Set<Content> = []
+	/** The last reading of the candidates and the default of each scheme and type shown, per role. */
+	@Published private(set) var handlers: [Content: [Role: HandlerState]] = [:]
+
 	private var entries: [Category: [Entry]] = [:]
 	private var loading: Set<Category> = []
 	/** Default handler of every UTI, for grouping File Types by application. */
 	private var typeHandlers: [String: String] = [:]
 	private var apps: [String: AppRef] = [:]
 	private var collapsed: Set<String> = []
+	/** How often the handlers of each scheme and type were changed, so that a reading that began before a change is not kept. */
+	private var generations: [Content: Int] = [:]
+	private let access: Catalog.HandlerAccess
+
+	init(access: Catalog.HandlerAccess = .system) {
+		self.access = access
+	}
 
 	var isLoading: Bool { entries[category] == nil }
 
@@ -84,7 +110,7 @@ final class AppModel: ObservableObject {
 
 	private func group(_ entries: [Entry]) -> [EntrySection] {
 		guard category == .types, typeGrouping != .none else {
-			return [EntrySection(id: "", title: nil, app: nil, entries: entries)]
+			return [EntrySection(id: "", title: nil, iconPath: nil, entries: entries)]
 		}
 		switch typeGrouping {
 		case .none:
@@ -92,13 +118,18 @@ final class AppModel: ObservableObject {
 		case .kind:
 			let groups = Dictionary(grouping: entries) { $0.kindGroup ?? "Other" }
 			return Catalog.kindOrder.compactMap { kind in
-				groups[kind].map { EntrySection(id: kind, title: kind, app: nil, entries: $0) }
+				groups[kind].map { EntrySection(id: kind, title: kind, iconPath: nil, entries: $0) }
 			}
 		case .app:
 			let groups = Dictionary(grouping: entries) { typeHandlers[$0.id]?.lowercased() ?? "" }
-			let sections = groups.map { key, entries in
-				let app = apps[key]
-				return EntrySection(id: key, title: app?.name ?? (key.isEmpty ? "No Default Application" : key), app: app, entries: entries)
+			let sections = groups.map { key, entries -> EntrySection in
+				if key.isEmpty { return EntrySection(id: key, title: "No Default Application", iconPath: nil, entries: entries) }
+				if key == DoNothingApp.bundleID.lowercased() {
+					return EntrySection(id: key, title: DoNothingApp.displayName, iconPath: DoNothingApp.copyURL()?.path, entries: entries)
+				}
+				// The key is lowercased so that spellings of one identifier group together; the title keeps the spelling the system gave.
+				let title = apps[key]?.name ?? entries.lazy.compactMap { self.typeHandlers[$0.id] }.first ?? key
+				return EntrySection(id: key, title: title, iconPath: apps[key]?.path, entries: entries)
 			}
 			// Apps alphabetically, types without a default last.
 			return sections.sorted { a, b in
@@ -116,14 +147,17 @@ final class AppModel: ObservableObject {
 		if category == .types && typeGrouping == .app { refresh() }
 	}
 
+	/** A list that is not grouped has no header to click, so it is never collapsed, whatever was collapsed in a grouped one. */
 	func isCollapsed(_ section: EntrySection) -> Bool {
-		collapsed.contains(collapseKey(section.id))
+		section.title != nil && collapsed.contains(collapseKey(section.id))
 	}
 
 	/** Collapses or expands a group; with `all`, every group follows the one toggled. */
 	func toggle(_ sectionID: String, all: Bool = false) {
+		let titled = sections.filter { $0.title != nil }.map(\.id)
+		guard titled.contains(sectionID) else { return }
 		let collapse = !collapsed.contains(collapseKey(sectionID))
-		for key in (all ? sections.map(\.id) : [sectionID]).map(collapseKey) {
+		for key in (all ? titled : [sectionID]).map(collapseKey) {
 			if collapse { collapsed.insert(key) } else { collapsed.remove(key) }
 		}
 		refresh()
@@ -143,7 +177,8 @@ final class AppModel: ObservableObject {
 		}
 	}
 
-	private func finishLoad(_ category: Category, _ result: [Entry]?, handlers: [String: String], apps: [String: AppRef]) {
+	/** Takes in a finished list. Internal so that a test can supply one. */
+	func finishLoad(_ category: Category, _ result: [Entry]?, handlers: [String: String], apps: [String: AppRef]) {
 		if category == .types {
 			typeHandlers = handlers
 			self.apps = apps
@@ -164,30 +199,96 @@ final class AppModel: ObservableObject {
 		selection = visibleEntries[min(max(current + offset, 0), visibleEntries.count - 1)].id
 	}
 
-	/**
-	Tells the user why a change of default failed. A change the user canceled is not worth a message.
-	- Returns: Whether the change succeeded.
-	*/
-	@discardableResult
-	func report(_ result: Result<Void, LSWrappers.LSErrors>, app: String, content: String) -> Bool {
-		switch result {
-		case .success: return true
-		case .failure(.canceled): return false
-		case .failure(let error):
-			errorMessage = error.print(argument: (app: app, content: content))
-			return false
-		}
+	// MARK: Handlers
+
+	/** What was last read for a scheme or type in a role; nil until it has been read. */
+	func handlerState(for content: Content, role: Role = .all) -> HandlerState? {
+		handlers[content]?[role]
 	}
 
-	/** Registers a custom URL scheme, handled by the bundled "do nothing" app until the user picks a real one. */
-	func addScheme(_ scheme: String) {
-		let scheme = scheme.trimmingCharacters(in: .whitespaces)
-		guard !scheme.isEmpty else { return }
-		Task {
-			let result = await Catalog.setDefault(.init(bundleID: DoNothingApp.bundleID), for: scheme, isScheme: true)
-			guard report(result, app: DoNothingApp.bundleID, content: scheme) else { return }
-			selections[.schemes] = scheme
-			load(.schemes, force: true)
+	/** Whether a change of a scheme or type is waiting. Another cannot be asked for it until the first has ended. */
+	func isChanging(_ content: Content) -> Bool {
+		changing.contains(content)
+	}
+
+	/** Reads a scheme or type again, unless it was changed while the reading was under way. */
+	func refresh(_ content: Content, roles: [Role]) async {
+		let generation = generations[content, default: 0]
+		let fresh = await access.read(content, roles)
+		guard generations[content, default: 0] == generation else { return }
+		store(fresh, for: content)
+	}
+
+	/** Takes in readings made elsewhere, such as the whole list of an application's claims. */
+	func store(_ fresh: [Content: [Role: HandlerState]]) {
+		for (content, states) in fresh { store(states, for: content) }
+	}
+
+	private func store(_ states: [Role: HandlerState], for content: Content) {
+		handlers[content, default: [:]].merge(states) { _, new in new }
+		if !content.isScheme, let all = states[.all] { defaultChanged(forType: content.id, to: all.current) }
+	}
+
+	/**
+	Changes the default of a scheme or type, waits until it has taken effect, and reads it again. This is the one place a change is
+	made, so the same rules hold wherever it is asked for: a scheme or type waits for one change at a time, and the answer to a
+	confirmation or a failure is told the same way.
+	- Parameters:
+	  - roles: The roles to read again afterward: "All Roles" changes them all, and a canceled confirmation changes none.
+	*/
+	@discardableResult
+	func change(_ content: Content, to choice: Catalog.HandlerChoice, role: Role = .all, rereading roles: [Role] = [.all]) async -> ChangeOutcome {
+		guard !changing.contains(content) else { return .ignored }
+		changing.insert(content)
+		defer { changing.remove(content) }
+		generations[content, default: 0] += 1
+
+		var outcome = ChangeOutcome.applied
+		var prompted = false
+		switch await access.set(choice, content, role) {
+		case .success:
+			// A single role is changed by a function that does not wait for macOS, or for the user, and a read can trail even
+			// a change macOS has reported: give the new handler a moment to show up before saying that it did not.
+			prompted = await access.settle(content, role, choice.bundleID)
+		case .failure(.canceled):
+			outcome = .canceled
+		case .failure(let error):
+			errorMessage = error.print(argument: (app: choice.bundleID, content: content.id))
+			outcome = .failed
 		}
+		let fresh = await access.read(content, Array(Set(roles + [role])))
+		generations[content, default: 0] += 1
+		store(fresh, for: content)
+		if outcome == .applied, fresh[role]?.isCurrent(choice.bundleID) != true {
+			// After a confirmation the handler that stayed is the answer "no"; without one, macOS said yes and did not do it.
+			if prompted { outcome = .canceled } else {
+				errorMessage = "Launch Services did not apply the change for \(content.id)."
+				outcome = .notApplied
+			}
+		}
+		return outcome
+	}
+
+	/**
+	Registers a custom URL scheme, handled by the bundled "do nothing" app until the user picks a real one. A scheme the list already
+	has is selected instead, and keeps its handler: this is not a way to change that, and "mailto" is a scheme like any other.
+	*/
+	func addScheme(_ text: String) async {
+		let scheme = text.trimmingCharacters(in: .whitespaces).lowercased()
+		guard !scheme.isEmpty, let known = entries[.schemes] else { return }
+		guard isValidScheme(scheme) else {
+			errorMessage = LSWrappers.LSErrors.invalidScheme.print(argument: (app: DoNothingApp.bundleID, content: scheme))
+			return
+		}
+		if let existing = known.first(where: { $0.id.lowercased() == scheme }) {
+			query = ""
+			selections[.schemes] = existing.id
+			refresh()
+			return
+		}
+		guard await change(Content(isScheme: true, id: scheme), to: .init(bundleID: DoNothingApp.bundleID)) == .applied else { return }
+		query = ""
+		selections[.schemes] = scheme
+		load(.schemes, force: true)
 	}
 }

@@ -34,6 +34,13 @@ enum Role: String, CaseIterable, Identifiable {
 	}
 }
 
+/** A URI Scheme or a UTI: what a default handler is for. */
+struct Content: Hashable, Sendable {
+	let isScheme: Bool
+	/** The scheme, or the UTI. */
+	let id: String
+}
+
 /** Content and applications an application declares it can open. */
 struct AppDeclarations: Hashable {
 	let path: String
@@ -94,7 +101,6 @@ struct HandlerState {
 	let current: String?
 
 	func isCurrent(_ bundleID: String) -> Bool { current?.caseInsensitiveCompare(bundleID) == .orderedSame }
-
 }
 
 /** Builds the sidebar lists from Launch Services, and changes defaults. The reads are synchronous and meant to run off the main thread; `setDefault` is `async`. */
@@ -139,23 +145,42 @@ enum Catalog {
 				let declarations = AppDeclarations(path: path, version: version, schemes: schemes.sorted(), types: types.sorted())
 				return Entry(id: bundleID, kind: .app(declarations), title: name, subtitle: bundleID)
 			}.compactMap { $0 }
-			// Launch Services resolves a bundle ID to a single copy, so duplicates are meaningless.
-			var seen = Set<String>()
-			return apps.filter { seen.insert($0.id.lowercased()).inserted }
-				.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+			return preferredCopies(of: apps).sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+		}
+	}
+
+	/**
+	Keeps one entry per application: the copy Launch Services resolves its bundle identifier to, which is the copy that "Make Default"
+	assigns, and not whichever copy it happens to list first (an updater's staging copy, say). Where it resolves to none of the
+	listed copies, the first one stays.
+	*/
+	static func preferredCopies(of apps: [Entry], resolve: (String) -> URL? = { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }) -> [Entry] {
+		func path(_ entry: Entry) -> String? { if case .app(let declarations) = entry.kind { return declarations.path } else { return nil } }
+		func same(_ a: String, _ b: String) -> Bool { URL(fileURLWithPath: a).resolvingSymlinksInPath().path == URL(fileURLWithPath: b).resolvingSymlinksInPath().path }
+		var order: [String] = []
+		var copies: [String: [Entry]] = [:]
+		for app in apps {
+			let key = app.id.lowercased()
+			if copies[key] == nil { order.append(key) }
+			copies[key, default: []].append(app)
+		}
+		return order.compactMap { key in
+			let listed = copies[key]!
+			guard listed.count > 1, let resolved = resolve(listed[0].id)?.path else { return listed[0] }
+			return listed.first { path($0).map { same($0, resolved) } ?? false } ?? listed[0]
 		}
 	}
 
 	/** Candidate handlers and the current default for a scheme or UTI in a given role. */
-	static func handlers(for content: String, isScheme: Bool, role: Role = .all) -> HandlerState {
+	static func handlers(for content: Content, role: Role = .all) -> HandlerState {
 		let ids: [String]
 		let current: String?
-		if isScheme {
-			ids = LSWrappers.Schemes.copyAllHandlers(content, asPath: false) ?? []
-			current = LSWrappers.Schemes.copyDefaultHandler(content, asPath: false)
+		if content.isScheme {
+			ids = LSWrappers.Schemes.copyAllHandlers(content.id, asPath: false) ?? []
+			current = LSWrappers.Schemes.copyDefaultHandler(content.id, asPath: false)
 		} else {
-			ids = LSWrappers.UTIs.copyAllHandlers(content, inRoles: role.mask, asPath: false) ?? []
-			current = defaultHandler(forType: content, role: role)
+			ids = LSWrappers.UTIs.copyAllHandlers(content.id, inRoles: role.mask, asPath: false) ?? []
+			current = defaultHandler(forType: content.id, role: role)
 		}
 		var seen = Set<String>()
 		let candidates = (ids + [current].compactMap { $0 })
@@ -201,7 +226,7 @@ enum Catalog {
 	static let kindOrder: [String] = kinds.map(\.0) + ["Other"]
 
 	/** An application the user picked as a handler: one the menu names by bundle identifier, or one chosen from disk with "Other…". */
-	struct HandlerChoice {
+	struct HandlerChoice: Sendable {
 		let bundleID: String
 		/** Where the application is, when the user chose a file. Nil when only the bundle identifier is known. */
 		var url: URL? = nil
@@ -212,7 +237,7 @@ enum Catalog {
 	confirmation. Canceling it arrives as `.canceled`. A change of one role alone is made by a function that answers at once,
 	so `settledDefault` is what waits for that.
 	*/
-	static func setDefault(_ choice: HandlerChoice, for content: String, isScheme: Bool, role: Role = .all) async -> Result<Void, LSWrappers.LSErrors> {
+	static func setDefault(_ choice: HandlerChoice, for content: Content, role: Role = .all) async -> Result<Void, LSWrappers.LSErrors> {
 		let app: LSWrappers.ResolvedApp
 		// A file the user picked is that file, not whichever copy Launch Services ranks first for its bundle identifier.
 		switch LSWrappers.resolveApp(choice.url?.path ?? choice.bundleID) {
@@ -225,8 +250,8 @@ enum Catalog {
 				continuation.resume(returning: LSWrappers.awaitCompletion { completion in
 					// The system can ask the user to confirm, so the request is made from the main thread, where the app's windows are.
 					DispatchQueue.main.async {
-						if isScheme { LSWrappers.Schemes.setDefaultHandler(content, app, completion: completion) }
-						else { LSWrappers.UTIs.setDefaultHandler(content, app, role.mask, completion: completion) }
+						if content.isScheme { LSWrappers.Schemes.setDefaultHandler(content.id, app, completion: completion) }
+						else { LSWrappers.UTIs.setDefaultHandler(content.id, app, role.mask, completion: completion) }
 					}
 				})
 			}
@@ -234,30 +259,55 @@ enum Catalog {
 	}
 
 	/**
-	Waits until a default change has really taken effect, and returns the handler actually in place. The per-role functions
-	return before macOS has applied the change, and give no way to find out when it has, or whether the user canceled a
-	confirmation. `setDefault` does wait for a change of all roles, but a read can still trail it by a moment. Either way this
-	returns at once when the handler is already the target.
+	Waits until a default change has really taken effect. The per-role functions return before macOS has applied the change,
+	and give no way to find out when it has, or whether the user canceled a confirmation. `setDefault` does wait for a change
+	of all roles, but a read can still trail it by a moment. Either way this returns at once when the handler is already the target.
+	- Returns: Whether macOS asked the user to confirm. If it did, a handler that is not the target means the user said no.
 	*/
-	static func settledDefault(for content: String, isScheme: Bool, role: Role = .all, target: String) async -> (handler: String?, prompted: Bool) {
+	static func settledDefault(for content: Content, role: Role = .all, target: String) async -> Bool {
 		func current() -> String? {
-			isScheme ? LSWrappers.Schemes.copyDefaultHandler(content, asPath: false) : defaultHandler(forType: content, role: role)
+			content.isScheme ? LSWrappers.Schemes.copyDefaultHandler(content.id, asPath: false) : defaultHandler(forType: content.id, role: role)
 		}
 		let start = Date()
 		var sawPrompt = false
 		while true {
 			let value = current()
-			if value?.caseInsensitiveCompare(target) == .orderedSame { return (value, sawPrompt) }
+			if value?.caseInsensitiveCompare(target) == .orderedSame { return sawPrompt }
 			let prompting = isConfirmationPromptVisible()
 			if prompting { sawPrompt = true }
 			let elapsed = Date().timeIntervalSince(start)
 			if sawPrompt && !prompting {
 				// The prompt was answered; give Launch Services a moment to apply an approval.
 				try? await Task.sleep(nanoseconds: 500_000_000)
-				return (current(), true)
+				return true
 			}
-			if (!sawPrompt && elapsed > 3) || elapsed > 300 { return (value, sawPrompt) }
+			if (!sawPrompt && elapsed > 3) || elapsed > 300 { return sawPrompt }
 			try? await Task.sleep(nanoseconds: 200_000_000)
+		}
+	}
+
+	/**
+	What the model asks of the system to change a default and to see the result. The system's own is the only one the app uses;
+	a test passes one of its own, so that the model's rules (what is refused, what is shown while a change waits, what is said
+	when it did not take effect) can be checked without writing a default.
+	*/
+	struct HandlerAccess: Sendable {
+		/// Changes the default and waits for macOS; see `setDefault`.
+		var set: @Sendable (HandlerChoice, Content, Role) async -> Result<Void, LSWrappers.LSErrors>
+		/// Waits until the target shows as the handler; says whether macOS asked the user to confirm; see `settledDefault`.
+		var settle: @Sendable (Content, Role, _ target: String) async -> Bool
+		/// Reads the candidates and the current default of a scheme or UTI in each of the roles.
+		var read: @Sendable (Content, [Role]) async -> [Role: HandlerState]
+
+		static var system: HandlerAccess {
+			HandlerAccess(
+				set: { await Catalog.setDefault($0, for: $1, role: $2) },
+				settle: { await Catalog.settledDefault(for: $0, role: $1, target: $2) },
+				read: { content, roles in
+					await Task.detached(priority: .userInitiated) {
+						Dictionary(roles.map { ($0, Catalog.handlers(for: content, role: $0)) }, uniquingKeysWith: { first, _ in first })
+					}.value
+				})
 		}
 	}
 

@@ -24,6 +24,9 @@ jobs:
       - name: Logic tests
         run: Tests/logic/run.sh
 
+      - name: Model tests
+        run: Tests/model/run.sh
+
       # Breaks the shared sources on purpose, one way at a time; the logic tests have to notice every one.
       - name: Mutation check
         run: Tests/mutations.sh

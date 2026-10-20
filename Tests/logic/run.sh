@@ -22,6 +22,6 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 swiftc -swift-version 5 -module-name SwdaLogicTests -o "$work/logic" \
-	"$here/main.swift" "$repo/Sources/Common Sources/"*.swift 2>"$work/compile.log" \
+	"$here/main.swift" "$here/../support/checks.swift" "$repo/Sources/Common Sources/"*.swift 2>"$work/compile.log" \
 	|| { grep -E 'error' "$work/compile.log" >&2 || cat "$work/compile.log" >&2; exit 1; }
 "$work/logic"

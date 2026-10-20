@@ -273,8 +273,8 @@ private final class GroupCell: NSTableCellView {
 	@MainActor
 	func configure(_ section: EntrySection, isCollapsed: Bool) {
 		chevron.image = NSImage(systemSymbolName: isCollapsed ? "chevron.right" : "chevron.down", accessibilityDescription: nil)
-		icon.image = section.app.map { Icons.app($0.path, size: 14) }
-		icon.isHidden = section.app == nil
+		icon.image = section.iconPath.map { Icons.app($0, size: 14) }
+		icon.isHidden = section.iconPath == nil
 		title.stringValue = section.title ?? ""
 		count.stringValue = "\(section.entries.count)"
 	}

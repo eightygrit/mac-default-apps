@@ -39,11 +39,9 @@ struct DetailView: View {
 private struct ContentDetail: View {
 	let entry: Entry
 	@EnvironmentObject private var model: AppModel
-	@State private var states: [Role: HandlerState] = [:]
-	/** Roles with a change awaiting confirmation. */
-	@State private var pending: Set<Role> = []
 
 	private var isScheme: Bool { entry.kind == .scheme }
+	private var content: Content { Content(isScheme: isScheme, id: entry.id) }
 	/** Roles that can be told apart: only "All Roles" when the system no longer has the per-role functions. */
 	private var roles: [Role] { isScheme || !LSLegacyRoles.isAvailable ? [.all] : Role.allCases }
 	private var footer: String {
@@ -69,47 +67,19 @@ private struct ContentDetail: View {
 			}
 		}
 		.formStyle(.grouped)
-		.task { await reload(roles) }
-	}
-
-	private func reload(_ roles: [Role]) async {
-		let content = entry.id, isScheme = isScheme
-		let fresh = await Task.detached(priority: .userInitiated) {
-			roles.map { ($0, Catalog.handlers(for: content, isScheme: isScheme, role: $0)) }
-		}.value
-		for (role, state) in fresh { states[role] = state }
-		if !isScheme, let all = states[.all] { model.defaultChanged(forType: content, to: all.current) }
+		.task { await model.refresh(content, roles: roles) }
 	}
 
 	@ViewBuilder
 	private func picker(for role: Role, label: String) -> some View {
-		if pending.contains(role) || pending.contains(.all) {
+		if model.isChanging(content) {
 			LabeledContent(label) { WaitingLabel() }
-		} else if let state = states[role] {
-			HandlerPicker(label: label, state: state) { choose($0, role: role) }
+		} else if let state = model.handlerState(for: content, role: role) {
+			HandlerPicker(label: label, state: state) { choice in
+				Task { await model.change(content, to: choice, role: role, rereading: roles) }
+			}
 		} else {
 			LabeledContent(label) { ProgressView().controlSize(.small) }
-		}
-	}
-
-	private func choose(_ choice: Catalog.HandlerChoice, role: Role) {
-		pending.insert(role)
-		let content = entry.id, isScheme = isScheme, bundleID = choice.bundleID
-		Task {
-			let result = await Catalog.setDefault(choice, for: content, isScheme: isScheme, role: role)
-			let succeeded = model.report(result, app: bundleID, content: content)
-			var prompted = false
-			if succeeded {
-				// A single role is changed by a function that does not wait for macOS, or for the user, and a read can trail even
-				// a change macOS has reported: give the new handler a moment to show up before saying that it did not.
-				prompted = await Catalog.settledDefault(for: content, isScheme: isScheme, role: role, target: bundleID).prompted
-			}
-			// Re-read every role: "All Roles" changes them all, and a canceled prompt changes none.
-			await reload(roles)
-			pending.remove(role)
-			if succeeded, !prompted, states[role]?.isCurrent(bundleID) != true {
-				model.errorMessage = "Launch Services did not apply the change for \(content)."
-			}
 		}
 	}
 }
@@ -162,16 +132,13 @@ private struct HandlerPicker: View {
 
 // MARK: - Application
 
-/** One scheme or UTI an application declares, with its current handlers. */
+/** One scheme or UTI an application declares. What currently opens it is the model's to say (`AppModel.handlerState`). */
 private struct Claim: Identifiable {
-	let id: String
+	let content: Content
 	let title: String
 	let subtitle: String
-	let isScheme: Bool
-	let handlers: HandlerState
-	let isDefault: Bool
 
-	var key: String { (isScheme ? "scheme:" : "type:") + id }
+	var id: String { (content.isScheme ? "scheme:" : "type:") + content.id }
 }
 
 /** Everything an application declares, with one-click "Make Default". */
@@ -181,8 +148,6 @@ private struct AppDetail: View {
 	let declarations: AppDeclarations
 	@EnvironmentObject private var model: AppModel
 	@State private var claims: [Claim]?
-	/** Claims with a change awaiting confirmation. */
-	@State private var pending: Set<String> = []
 
 	var body: some View {
 		Form {
@@ -203,8 +168,8 @@ private struct AppDetail: View {
 				}
 			}
 			if let claims {
-				claimSection("URL Schemes", claims.filter(\.isScheme))
-				claimSection("File Types", claims.filter { !$0.isScheme })
+				claimSection("URL Schemes", claims.filter(\.content.isScheme))
+				claimSection("File Types", claims.filter { !$0.content.isScheme })
 			} else {
 				Section { ProgressView().frame(maxWidth: .infinity) }
 			}
@@ -212,63 +177,46 @@ private struct AppDetail: View {
 		.formStyle(.grouped)
 		.task {
 			let bundleID = entry.id, declarations = declarations
-			claims = await Task.detached(priority: .userInitiated) { Self.loadClaims(bundleID, declarations) }.value
+			let loaded = await Task.detached(priority: .userInitiated) { Self.loadClaims(bundleID, declarations) }.value
+			model.store(loaded.handlers)
+			claims = loaded.claims
 		}
+	}
+
+	private func isDefault(_ claim: Claim) -> Bool {
+		model.handlerState(for: claim.content)?.isCurrent(entry.id) == true
 	}
 
 	@ViewBuilder
 	private func claimSection(_ title: String, _ items: [Claim]) -> some View {
 		if !items.isEmpty {
-			Section("\(title) (\(items.filter(\.isDefault).count) of \(items.count) default)") {
+			Section("\(title) (\(items.filter(isDefault).count) of \(items.count) default)") {
 				ForEach(items) { claim in
-					ClaimRow(claim: claim, appID: entry.id, isPending: pending.contains(claim.key)) { choose($0, for: claim) }
+					ClaimRow(claim: claim, appID: entry.id, handlers: model.handlerState(for: claim.content),
+							 isDefault: isDefault(claim), isPending: model.isChanging(claim.content)) { choice in
+						Task { await model.change(claim.content, to: choice) }
+					}
 				}
 			}
 		}
 	}
 
-	private func choose(_ choice: Catalog.HandlerChoice, for claim: Claim) {
-		pending.insert(claim.key)
-		let appID = entry.id, bundleID = choice.bundleID
-		Task {
-			let result = await Catalog.setDefault(choice, for: claim.id, isScheme: claim.isScheme)
-			let succeeded = model.report(result, app: bundleID, content: claim.id)
-			var prompted = false
-			if succeeded {
-				// Same as for a single role above: a read can trail a change macOS has reported.
-				prompted = await Catalog.settledDefault(for: claim.id, isScheme: claim.isScheme, target: bundleID).prompted
-			}
-			let handlers = await Task.detached(priority: .userInitiated) {
-				Catalog.handlers(for: claim.id, isScheme: claim.isScheme)
-			}.value
-			claims = claims?.map { old in
-				guard old.key == claim.key else { return old }
-				return Claim(id: old.id, title: old.title, subtitle: old.subtitle, isScheme: old.isScheme,
-							 handlers: handlers, isDefault: handlers.isCurrent(appID))
-			}
-			pending.remove(claim.key)
-			if !claim.isScheme { model.defaultChanged(forType: claim.id, to: handlers.current) }
-			if succeeded, !prompted, !handlers.isCurrent(bundleID) {
-				model.errorMessage = "Launch Services did not apply the change for \(claim.id)."
-			}
+	private nonisolated static func loadClaims(_ bundleID: String, _ declarations: AppDeclarations) -> (claims: [Claim], handlers: [Content: [Role: HandlerState]]) {
+		// A type the system does not know cannot be made anyone's default (the change is refused as an unknown UTI), so it is not offered.
+		let known = declarations.types.filter { !$0.isEmpty && UTType($0) != nil }
+		let schemes = Catalog.concurrentMap(declarations.schemes) { scheme -> (Claim, HandlerState) in
+			let content = Content(isScheme: true, id: scheme)
+			return (Claim(content: content, title: "\(scheme):", subtitle: LSWrappers.Schemes.copyNameForScheme(scheme) ?? ""), Catalog.handlers(for: content))
 		}
-	}
-
-	private nonisolated static func loadClaims(_ bundleID: String, _ declarations: AppDeclarations) -> [Claim] {
-		let schemes = Catalog.concurrentMap(declarations.schemes) { scheme -> Claim in
-			let handlers = Catalog.handlers(for: scheme, isScheme: true)
-			return Claim(id: scheme, title: "\(scheme):", subtitle: LSWrappers.Schemes.copyNameForScheme(scheme) ?? "",
-						 isScheme: true, handlers: handlers, isDefault: handlers.isCurrent(bundleID))
-		}
-		let types = Catalog.concurrentMap(declarations.types) { identifier -> Claim in
+		let types = Catalog.concurrentMap(known) { identifier -> (Claim, HandlerState) in
 			let type = UTType(identifier)
 			let extensions = (type?.tags[.filenameExtension] ?? []).map { ".\($0)" }.joined(separator: " ")
-			let handlers = Catalog.handlers(for: identifier, isScheme: false)
-			return Claim(id: identifier, title: type?.localizedDescription ?? identifier,
-						 subtitle: extensions.isEmpty ? identifier : "\(identifier) · \(extensions)",
-						 isScheme: false, handlers: handlers, isDefault: handlers.isCurrent(bundleID))
-		}.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-		return schemes + types
+			let content = Content(isScheme: false, id: identifier)
+			return (Claim(content: content, title: type?.localizedDescription ?? identifier,
+						  subtitle: extensions.isEmpty ? identifier : "\(identifier) · \(extensions)"), Catalog.handlers(for: content))
+		}.sorted { $0.0.title.localizedStandardCompare($1.0.title) == .orderedAscending }
+		let all = schemes + types
+		return (all.map(\.0), Dictionary(all.map { ($0.0.content, [Role.all: $0.1]) }, uniquingKeysWith: { first, _ in first }))
 	}
 }
 
@@ -280,20 +228,23 @@ already owns offers a menu to hand it to another application; other rows offer "
 private struct ClaimRow: View {
 	let claim: Claim
 	let appID: String
+	/** What is read of the scheme or type so far; nil until it is. */
+	let handlers: HandlerState?
+	let isDefault: Bool
 	let isPending: Bool
 	let onChoose: (Catalog.HandlerChoice) -> Void
 
 	private var currentName: String? {
-		guard let current = claim.handlers.current else { return nil }
-		if claim.handlers.isCurrent(DoNothingApp.bundleID) { return DoNothingApp.displayName }
-		return claim.handlers.candidates.first { $0.id.caseInsensitiveCompare(current) == .orderedSame }?.name ?? current
+		guard let handlers, let current = handlers.current else { return nil }
+		if handlers.isCurrent(DoNothingApp.bundleID) { return DoNothingApp.displayName }
+		return handlers.candidates.first { $0.id.caseInsensitiveCompare(current) == .orderedSame }?.name ?? current
 	}
 
 	var body: some View {
 		HStack(spacing: 8) {
-			Image(systemName: claim.isDefault ? "checkmark.circle.fill" : "circle")
-				.foregroundStyle(claim.isDefault ? Color.green : Color.secondary.opacity(0.5))
-				.help(claim.isDefault ? "This application is the default" : "Another application is the default")
+			Image(systemName: isDefault ? "checkmark.circle.fill" : "circle")
+				.foregroundStyle(isDefault ? Color.green : Color.secondary.opacity(0.5))
+				.help(isDefault ? "This application is the default" : "Another application is the default")
 			VStack(alignment: .leading, spacing: 1) {
 				Text(claim.title).lineLimit(1)
 				Text(claim.subtitle)
@@ -302,7 +253,7 @@ private struct ClaimRow: View {
 					.lineLimit(1)
 					.truncationMode(.middle)
 					.textSelection(.enabled)
-				if !claim.isDefault {
+				if !isDefault {
 					Text(currentName.map { "Opens with \($0)" } ?? "No default application")
 						.font(.caption)
 						.foregroundStyle(.secondary)
@@ -311,8 +262,8 @@ private struct ClaimRow: View {
 			Spacer(minLength: 8)
 			if isPending {
 				WaitingLabel()
-			} else if claim.isDefault {
-				HandlerPicker(label: "Default Application", state: claim.handlers, onChoose: onChoose)
+			} else if isDefault, let handlers {
+				HandlerPicker(label: "Default Application", state: handlers, onChoose: onChoose)
 					.labelsHidden()
 					.fixedSize()
 					.help("Choose another application")

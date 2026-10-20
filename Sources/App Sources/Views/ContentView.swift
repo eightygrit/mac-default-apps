@@ -91,7 +91,8 @@ private struct SidebarView: View {
 	}
 
 	private func addScheme() {
-		model.addScheme(newScheme)
+		let scheme = newScheme
 		newScheme = ""
+		Task { await model.addScheme(scheme) }
 	}
 }

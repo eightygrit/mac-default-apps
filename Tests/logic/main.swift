@@ -4,20 +4,6 @@
 import AppKit
 import UniformTypeIdentifiers
 
-var checks = 0
-var failures = 0
-let verbose = ProcessInfo.processInfo.environment["VERBOSE"] == "1"
-
-func check<T: Equatable>(_ name: String, _ actual: T, _ expected: T) {
-    checks += 1
-    if actual == expected {
-        if verbose { print("ok    \(name)") }
-    } else {
-        failures += 1
-        print("FAIL  \(name)\n        expected: \(expected)\n        actual:   \(actual)")
-    }
-}
-func section(_ title: String) { if verbose { print("\n-- \(title)") } }
 
 // Nothing in this file may write a default handler or register an application for real: every call of a setter is given
 // a stand-in that only records what it is asked (`run.sh` refuses a call that is not), and the scripts that run this set
@@ -549,5 +535,4 @@ setenv("SWDA_NO_LEGACY_ROLES", "1", 1)
 check("... some roles", LSWrappers.HandlerSetter.system.forRoles("public.xbitmap-image", .viewer, "org.nonexistent.app"), E.permissionDenied.rawValue)
 unsetenv("SWDA_NO_LEGACY_ROLES")
 
-print("\(checks - failures) of \(checks) checks passed" + (failures == 0 ? "" : ", \(failures) FAILED"))
-exit(failures == 0 ? 0 : 1)
+finish()
