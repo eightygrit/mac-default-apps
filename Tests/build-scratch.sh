@@ -36,4 +36,13 @@ rc=$?
 grep -E 'BUILD (SUCCEEDED|FAILED)' "$out/build.log" | tail -1
 grep -E '^/.*: (warning|error):' "$out/build.log" | sed -E "s#^$repo/##" | sort -u >"$out/diagnostics.txt"
 echo "exit=$rc  distinct warnings: $(grep -c ': warning:' "$out/diagnostics.txt")  errors: $(grep -c ': error:' "$out/diagnostics.txt")"
+if [ "$rc" = 0 ] && [ "$kind" = dummy ]; then
+	# A main nib that the Info.plist names but the bundle lacks leaves the delegate uninstalled (it happened once, silently).
+	app="$out/products/Release/ThisAppDoesNothing.app"
+	nib="$(/usr/libexec/PlistBuddy -c 'Print :NSMainNibFile' "$app/Contents/Info.plist" 2>/dev/null || true)"
+	if [ -n "$nib" ] && [ ! -e "$app/Contents/Resources/$nib.nib" ] && [ ! -e "$app/Contents/Resources/Base.lproj/$nib.nib" ]; then
+		echo "error: Info.plist names the main nib '$nib', which is not in the bundle" >&2
+		exit 1
+	fi
+fi
 exit $rc

@@ -8,6 +8,7 @@
 */
 
 import AppKit
+import os
 import UniformTypeIdentifiers
 
 /**
@@ -508,7 +509,8 @@ extension Result where Success == Void, Failure == LSWrappers.LSErrors {
 		let mapped = LSWrappers.LSErrors(error)
 		if mapped == .defaultErr, !(error is LSWrappers.LSErrors) {
 			let described = error as NSError
-			NSLog("SwiftDefaultApps: macOS reported an error it has no message for: %@ (%@ %ld)", described.localizedDescription, described.domain, described.code)
+			// The unified log keeps NSLog arguments in the clear; the system's own words can contain paths, so they stay private.
+				Logger(subsystem: "cl.fail.lordkamina.SwiftDefaultApps", category: "errors").error("macOS reported an error it has no message for: \(described.localizedDescription, privacy: .private) (\(described.domain, privacy: .public) \(described.code, privacy: .public))")
 		}
 		self = .failure(mapped)
 	}
