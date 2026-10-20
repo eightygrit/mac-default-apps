@@ -106,7 +106,7 @@ private struct HandlerPicker: View {
 				Text("None").tag("")
 			}
 			ForEach(state.candidates) { app in
-				Label { Text(app.name) } icon: { Image(nsImage: Icons.app(app.path, size: 16)) }
+				Label { Text(state.label(for: app)) } icon: { Image(nsImage: Icons.app(app.path, size: 16)) }
 					.tag(app.id)
 			}
 			Divider()
@@ -211,7 +211,7 @@ private struct ClaimRow: View {
 	private var currentName: String? {
 		guard let handlers, let current = handlers.current else { return nil }
 		if handlers.isCurrent(DoNothingApp.bundleID) { return DoNothingApp.displayName }
-		return handlers.candidates.first { $0.id.caseInsensitiveCompare(current) == .orderedSame }?.name ?? current
+		return handlers.candidates.first { $0.id.caseInsensitiveCompare(current) == .orderedSame }.map(handlers.label(for:)) ?? current
 	}
 
 	var body: some View {
@@ -219,6 +219,7 @@ private struct ClaimRow: View {
 			Image(systemName: isDefault ? "checkmark.circle.fill" : "circle")
 				.foregroundStyle(isDefault ? Color.green : Color.secondary.opacity(0.5))
 				.help(isDefault ? "This application is the default" : "Another application is the default")
+				.accessibilityLabel(isDefault ? "Default" : "Not the default")
 			VStack(alignment: .leading, spacing: 1) {
 				Text(claim.title).lineLimit(1)
 				Text(claim.subtitle)
@@ -237,13 +238,14 @@ private struct ClaimRow: View {
 			if isPending {
 				WaitingLabel()
 			} else if isDefault, let handlers {
-				HandlerPicker(label: "Default Application", state: handlers, onChoose: onChoose)
+				HandlerPicker(label: "Default Application for \(claim.title)", state: handlers, onChoose: onChoose)
 					.labelsHidden()
 					.fixedSize()
 					.help("Choose another application")
 			} else {
 				Button("Make Default") { onChoose(.init(bundleID: appID)) }
 					.controlSize(.small)
+					.accessibilityLabel("Make Default for \(claim.title)")
 			}
 		}
 	}

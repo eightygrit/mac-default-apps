@@ -289,6 +289,93 @@ section("a file chosen with Other…")
 let viaFile = await Catalog.setDefault(.init(bundleID: textEdit, url: URL(fileURLWithPath: "/nonexistent/Foo.app")), for: Content(isScheme: false, id: "public.xbitmap-image")) // real call, guarded
 check("is looked up as that file, not by its identifier", { () -> OSStatus in if case .failure(let error) = viaFile { return error.rawValue } else { return 0 } }(), LSWrappers.LSErrors.appNotFound.rawValue)
 
+// MARK: - Taking a change back, and saying what happened
+
+section("undo")
+check("a change that replaced no known default offers nothing", a.undoOffer, nil)
+check("... and is announced without it", a.announcement?.text.hasPrefix("The default for public.html is ") ?? false, true)
+
+let back = Spy(); back.current = ["org.other", textEdit, "org.other"]
+let b = fresh(back)
+await b.refresh(html, roles: [.all])
+check("a change that replaced a known default", await b.change(html, to: .init(bundleID: textEdit)), .applied)
+check("... offers to put it back", b.undoOffer.map { [$0.content.id, $0.role.rawValue, $0.previous] }, ["public.html", "All Roles", "org.other"])
+check("... says what changed", b.undoOffer?.message.hasPrefix("Changed the default for public.html from ") ?? false, true)
+check("... and tells the screen reader that there is a way back", b.announcement?.text.hasSuffix(" Undo is available.") ?? false, true)
+let heard = b.announcement
+check("undoing it asks for the application that was the default", await b.undo(), .applied)
+check("... as the same role", back.sets.last, "type public.html All Roles org.other -")
+check("... and is not itself offered back", b.undoOffer, nil)
+check("... but is announced", b.announcement != heard, true)
+check("there is nothing to undo then", await b.undo(), nil)
+
+let perRole = Spy(); perRole.current = ["org.other", textEdit, "org.other"]
+let pr = fresh(perRole)
+await pr.refresh(html, roles: [.viewer])
+_ = await pr.change(html, to: .init(bundleID: textEdit), role: .viewer, rereading: [.viewer])
+check("a change of one role is offered back as that role", pr.undoOffer?.role, .viewer)
+_ = await pr.undo()
+check("... and undone as that role", perRole.sets.last, "type public.html Viewer org.other -")
+check("... reading the roles the change read", perRole.reads.last, "public.html Viewer")
+
+let same = Spy(); same.current = [textEdit, textEdit]
+let sm = fresh(same)
+await sm.refresh(html, roles: [.all])
+_ = await sm.change(html, to: .init(bundleID: textEdit))
+check("a change to what already was the default offers nothing", sm.undoOffer, nil)
+
+let again = Spy(); again.current = ["org.other", textEdit]
+let ag = fresh(again)
+await ag.refresh(html, roles: [.all])
+_ = await ag.change(html, to: .init(bundleID: textEdit))
+again.setResult = .failure(.permissionDenied)
+_ = await ag.change(mailto, to: .init(bundleID: textEdit))
+check("another change, even one that fails, ends the offer", ag.undoOffer, nil)
+
+let refused = Spy(); refused.setResult = .failure(.permissionDenied); refused.current = ["org.other"]
+let rf = fresh(refused)
+await rf.refresh(html, roles: [.all])
+_ = await rf.change(html, to: .init(bundleID: textEdit))
+check("a change that fails offers nothing", rf.undoOffer, nil)
+check("... and is left to the alert", rf.announcement, nil)
+
+let declinedBack = Spy(); declinedBack.setResult = .failure(.canceled); declinedBack.current = ["org.other"]
+let db = fresh(declinedBack)
+await db.refresh(html, roles: [.all])
+_ = await db.change(html, to: .init(bundleID: textEdit))
+check("a canceled change offers nothing", db.undoOffer, nil)
+check("... and is announced", db.announcement?.text.hasPrefix("Canceled.") ?? false, true)
+
+check("an offer can be dismissed", { () -> UndoOffer? in b.dismissUndo(); return b.undoOffer }(), nil)
+
+section("labels of candidates")
+let safari = AppRef(id: "com.apple.Safari", name: "Safari", path: nil)
+let twinA = AppRef(id: "com.example.pages", name: "Pages", path: nil)
+let twinB = AppRef(id: "com.other.PAGES", name: "pages", path: nil)
+let labeled = HandlerState(candidates: [safari, twinA, twinB], current: nil)
+check("a name that is unique is the label", labeled.label(for: safari), "Safari")
+check("a name that two applications share carries the identifier", labeled.label(for: twinA), "Pages (com.example.pages)")
+check("... for both, whatever the case of the name", labeled.label(for: twinB), "pages (com.other.PAGES)")
+check("the same application twice is not a clash", HandlerState(candidates: [safari, safari], current: nil).label(for: safari), "Safari")
+
+section("collapsing every group")
+let allGroups = AppModel(access: Spy().access())
+allGroups.finishLoad(.types, [entry("public.a", group: "Images"), entry("public.b", group: "Audio"), entry("public.c", group: "Images")])
+allGroups.category = .types
+check("an ungrouped list has no groups", allGroups.hasGroups, false)
+allGroups.setAllCollapsed(true)
+check("... and nothing to collapse", allGroups.visibleEntries.count, 3)
+allGroups.typeGrouping = .kind
+check("a grouped list has", allGroups.hasGroups, true)
+allGroups.setAllCollapsed(true)
+check("every group can be collapsed at once", allGroups.visibleEntries.map(\.id), [])
+allGroups.setAllCollapsed(false)
+check("... and expanded", allGroups.visibleEntries.count, 3)
+allGroups.toggle("Images")
+allGroups.setAllCollapsed(true)
+allGroups.setAllCollapsed(false)
+check("expanding all does not leave one behind", allGroups.visibleEntries.count, 3)
+
 // MARK: - The Applications tab
 
 section("preferred copies")

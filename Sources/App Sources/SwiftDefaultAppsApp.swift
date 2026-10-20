@@ -27,6 +27,15 @@ struct SwiftDefaultAppsApp: App {
 		.windowResizability(.contentMinSize)
 		.commands {
 			CommandGroup(replacing: .newItem) {}
+			// A group header can be clicked, but not reached with the keyboard; these do what Option-click does.
+			CommandGroup(after: .toolbar) {
+				Button("Collapse All Groups") { model.setAllCollapsed(true) }
+					.keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+					.disabled(!model.hasGroups)
+				Button("Expand All Groups") { model.setAllCollapsed(false) }
+					.keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+					.disabled(!model.hasGroups)
+			}
 		}
 	}
 }

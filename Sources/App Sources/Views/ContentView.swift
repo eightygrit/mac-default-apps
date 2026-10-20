@@ -24,6 +24,12 @@ struct ContentView: View {
 				.frame(maxWidth: .infinity, maxHeight: .infinity)
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity)
+		.safeAreaInset(edge: .bottom, spacing: 0) {
+			if let offer = model.undoOffer { UndoBar(offer: offer) }
+		}
+		.onChange(of: model.announcement) { announcement in
+			if let announcement { Announcer.post(announcement.text) }
+		}
 		.toolbar {
 			ToolbarItem(placement: .principal) {
 				Picker("Category", selection: $model.category) {
@@ -42,6 +48,41 @@ struct ContentView: View {
 		} message: {
 			Text(model.errorMessage ?? "")
 		}
+	}
+}
+
+/** What was changed, from what, and the way back. It stays until the next change or until it is dismissed. */
+@MainActor
+private struct UndoBar: View {
+	@EnvironmentObject private var model: AppModel
+	let offer: UndoOffer
+
+	var body: some View {
+		HStack(spacing: 10) {
+			Image(systemName: "arrow.uturn.backward.circle")
+				.foregroundStyle(.secondary)
+				.accessibilityHidden(true)
+			Text(offer.message).lineLimit(2)
+			Spacer(minLength: 8)
+			Button("Undo") { Task { await model.undo() } }
+			Button { model.dismissUndo() } label: { Image(systemName: "xmark") }
+				.buttonStyle(.borderless)
+				.accessibilityLabel("Dismiss")
+				.help("Dismiss")
+		}
+		.padding(.horizontal, 12)
+		.padding(.vertical, 8)
+		.background(.bar)
+		.overlay(alignment: .top) { Divider() }
+	}
+}
+
+/** Says something to VoiceOver, which otherwise hears nothing of a change that needed no alert. */
+@MainActor
+enum Announcer {
+	static func post(_ text: String) {
+		NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+							 userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
 	}
 }
 

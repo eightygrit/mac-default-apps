@@ -139,6 +139,8 @@ See https://github.com/Lord-Kamina/SwiftDefaultApps/issues
     + `SWDA_NO_LEGACY_ROLES=1` makes the app and `swda` behave as if macOS no longer had the per-role functions.
     + `SWDA_READ_ONLY=1` makes every change of a default and every registration of an application fail as if macOS had refused it.
     + `SECURITY.md`, `CONTRIBUTING.md` and `THIRD_PARTY_NOTICES.md`; a GitHub Actions workflow that builds the three targets with warnings fatal and runs the tests.
+    + After the app changes a default it says what changed, from which application to which, and offers **Undo** (not when the scheme or type had no default before, or when macOS did not apply the change). Nothing is recorded across launches.
+    + **View → Collapse All Groups** and **Expand All Groups** (⌥⌘← and ⌥⌘→) do from the keyboard what Option-click on a group header does. For VoiceOver a group header is a button that says how many items it holds and whether it is open, a change that needs no alert is announced, every Make Default button says for what, and applications that share a name are listed with their bundle identifiers.
     + An application given by name that two different applications share (Siri, or a name that only exists nested inside another application) is refused with a new error, 1001, which lists the candidates and asks for a path.
   + ### Changed
     + The preference pane is replaced by a standalone app (SwiftUI, macOS 13 or later), by ultranity ([#98](https://github.com/Lord-Kamina/SwiftDefaultApps/pull/98)).

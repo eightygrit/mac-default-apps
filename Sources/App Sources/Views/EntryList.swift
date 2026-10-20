@@ -166,6 +166,7 @@ struct EntryList: NSViewRepresentable {
 			case let group as Group:
 				let cell = outlineView.makeView(withIdentifier: GroupCell.identifier, owner: nil) as? GroupCell ?? GroupCell()
 				cell.configure(group.section, isCollapsed: model?.isCollapsed(group.section) ?? false)
+				cell.onPress = { [weak self, id = group.section.id] in self?.model?.toggle(id) }
 				return cell
 			case let row as Row:
 				let cell = outlineView.makeView(withIdentifier: EntryCell.identifier, owner: nil) as? EntryCell ?? EntryCell()
@@ -240,6 +241,8 @@ private final class GroupCell: NSTableCellView {
 	private let icon = NSImageView()
 	private let title = NSTextField(labelWithString: "")
 	private let count = NSTextField(labelWithString: "")
+	/** What VoiceOver's press does, and the same as a click on the header. */
+	var onPress: (() -> Void)?
 
 	init() {
 		super.init(frame: .zero)
@@ -278,5 +281,18 @@ private final class GroupCell: NSTableCellView {
 		icon.isHidden = section.iconPath == nil
 		title.stringValue = section.title ?? ""
 		count.stringValue = "\(section.entries.count)"
+		// The header is one button for VoiceOver, not four labels: it says what it is, how much it holds and whether it is open.
+		let items = section.entries.count == 1 ? "1 item" : "\(section.entries.count) items"
+		setAccessibilityElement(true)
+		setAccessibilityRole(.button)
+		setAccessibilityChildren([])
+		setAccessibilityLabel("\(section.title ?? ""), \(items)")
+		setAccessibilityValue(isCollapsed ? "collapsed" : "expanded")
+		setAccessibilityHelp(isCollapsed ? "Press to expand the group" : "Press to collapse the group")
+	}
+
+	override func accessibilityPerformPress() -> Bool {
+		onPress?()
+		return onPress != nil
 	}
 }

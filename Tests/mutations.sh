@@ -125,6 +125,20 @@ MUTATIONS = [
      "the Applications tab shows the first copy listed, not the one that is resolved"),
     ("model", "model/Catalog.swift", "choice.url?.path ?? choice.bundleID", "choice.bundleID",
      "a file chosen with Other... is looked up again by its identifier"),
+    ("model", "model/AppModel.swift", "if let previous, previous.caseInsensitiveCompare(bundleID) != .orderedSame {", "if let previous {",
+     "a change to what already was the default offers to be undone"),
+    ("model", "model/AppModel.swift", "undoOffer = nil\n\t\tlet previous = handlerState", "let previous = handlerState",
+     "another change leaves the offer to undo an older one"),
+    ("model", "model/AppModel.swift", "undoOffer = nil // taking a change back is not itself offered back", "",
+     "undoing a change offers to undo the undo"),
+    ("model", "model/AppModel.swift", "rereading: offer.rereading)", "rereading: [.all])",
+     "undoing a change reads other roles than the change did"),
+    ("model", "model/AppModel.swift", "role: offer.role, rereading", "role: .all, rereading",
+     "undoing a change of one role changes every role"),
+    ("model", "model/Catalog.swift", "$0.id.caseInsensitiveCompare(app.id) != .orderedSame && ", "",
+     "an application is told apart from itself in a menu"),
+    ("model", "model/AppModel.swift", "for key in keys { if collapse", "for key in keys.prefix(1) { if collapse",
+     "collapsing every group collapses one"),
 ]
 
 def build_and_run(directory, suite):

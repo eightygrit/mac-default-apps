@@ -87,12 +87,16 @@ struct AppRef: Identifiable, Hashable {
 	let name: String
 	let path: String?
 
+	init(id: String, name: String, path: String?) {
+		self.id = id
+		self.name = name
+		self.path = path
+	}
+
 	init?(bundleID: String) {
 		guard bundleID.caseInsensitiveCompare(DoNothingApp.bundleID) != .orderedSame else { return nil }
 		guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
-		self.id = bundleID
-		self.path = url.path
-		self.name = FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+		self.init(id: bundleID, name: FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: ""), path: url.path)
 	}
 }
 
@@ -102,6 +106,12 @@ struct HandlerState {
 	let current: String?
 
 	func isCurrent(_ bundleID: String) -> Bool { current?.caseInsensitiveCompare(bundleID) == .orderedSame }
+
+	/** What to call a candidate in a menu: its name, and its bundle identifier too when another candidate has the same name. */
+	func label(for app: AppRef) -> String {
+		let shared = candidates.contains { $0.id.caseInsensitiveCompare(app.id) != .orderedSame && $0.name.caseInsensitiveCompare(app.name) == .orderedSame }
+		return shared ? "\(app.name) (\(app.id))" : app.name
+	}
 }
 
 /**
@@ -224,6 +234,12 @@ enum Catalog {
 			guard listed.count > 1, let resolved = resolve(listed[0].id)?.path else { return listed[0] }
 			return listed.first { path($0).map { same($0, resolved) } ?? false } ?? listed[0]
 		}
+	}
+
+	/** What to call an application in a sentence: its name, Do Nothing's own name, or the identifier when it is not installed. */
+	static func appName(_ bundleID: String) -> String {
+		if bundleID.caseInsensitiveCompare(DoNothingApp.bundleID) == .orderedSame { return DoNothingApp.displayName }
+		return AppRef(bundleID: bundleID)?.name ?? bundleID
 	}
 
 	/** Candidate handlers and the current default for a scheme or UTI in a given role. */

@@ -40,6 +40,24 @@ enum ChangeOutcome: Equatable {
 	case ignored
 }
 
+/** What was the default of a scheme or type before this program changed it, so that the change can be taken back. */
+struct UndoOffer: Equatable {
+	let content: Content
+	let role: Role
+	/** The bundle identifier of the application that was the default. */
+	let previous: String
+	/** The roles to read again afterward, as for the change it takes back. */
+	let rereading: [Role]
+	/** What the change was, in a sentence. */
+	let message: String
+}
+
+/** A sentence for the screen reader about what has just happened. `number` makes the same sentence twice two announcements. */
+struct Announcement: Equatable {
+	let number: Int
+	let text: String
+}
+
 /** UI state of the app: the loaded lists, the search query and the selection of each category. */
 @MainActor
 final class AppModel: ObservableObject {
@@ -68,6 +86,11 @@ final class AppModel: ObservableObject {
 	@Published private(set) var changing: Set<Content> = []
 	/** The last reading of the candidates and the default of each scheme and type shown, per role. */
 	@Published private(set) var handlers: [Content: [Role: HandlerState]] = [:]
+	/** The last change that took effect and can be taken back; any other change asked for ends the offer. */
+	@Published private(set) var undoOffer: UndoOffer?
+	/** What the last change came to, for VoiceOver; the view posts it. */
+	@Published private(set) var announcement: Announcement?
+	private var announced = 0
 
 	private var entries: [Category: [Entry]] = [:]
 	private var loading: Set<Category> = []
@@ -166,6 +189,17 @@ final class AppModel: ObservableObject {
 		for key in (all ? titled : [sectionID]).map(collapseKey) {
 			if collapse { collapsed.insert(key) } else { collapsed.remove(key) }
 		}
+		refresh()
+	}
+
+	/** Whether the list has groups to collapse. */
+	var hasGroups: Bool { sections.contains { $0.title != nil } }
+
+	/** Collapses or expands every group; for the menu, where there is no header to click. */
+	func setAllCollapsed(_ collapse: Bool) {
+		let keys = sections.filter { $0.title != nil }.map { collapseKey($0.id) }
+		guard !keys.isEmpty else { return }
+		for key in keys { if collapse { collapsed.insert(key) } else { collapsed.remove(key) } }
 		refresh()
 	}
 
@@ -274,6 +308,8 @@ final class AppModel: ObservableObject {
 		changing.insert(content)
 		defer { changing.remove(content) }
 		generations[content, default: 0] += 1
+		undoOffer = nil
+		let previous = handlerState(for: content, role: role)?.current
 
 		var outcome = ChangeOutcome.applied
 		var prompted = false
@@ -298,9 +334,53 @@ final class AppModel: ObservableObject {
 				outcome = .notApplied
 			}
 		}
+		say(outcome, of: content, role: role, from: previous, to: choice.bundleID, rereading: roles)
 		// A record of what this program changed, for whoever wonders later; scheme, type and application identifiers are not private.
 		Self.log.notice("default of \(content.isScheme ? "scheme" : "type", privacy: .public) \(content.id, privacy: .public), role \(role.rawValue, privacy: .public), to \(choice.bundleID, privacy: .public): \(String(describing: outcome), privacy: .public)")
 		return outcome
+	}
+
+	/** Says how a change came to an end to a screen reader, and offers to take back a change that replaced a known default. */
+	private func say(_ outcome: ChangeOutcome, of content: Content, role: Role, from previous: String?, to bundleID: String, rereading roles: [Role]) {
+		let subject = describe(content) + (role == .all ? "" : " (\(role.rawValue))")
+		switch outcome {
+		case .applied:
+			if let previous, previous.caseInsensitiveCompare(bundleID) != .orderedSame {
+				let message = "Changed the default for \(subject) from \(Catalog.appName(previous)) to \(Catalog.appName(bundleID))."
+				undoOffer = UndoOffer(content: content, role: role, previous: previous, rereading: roles, message: message)
+				announce(message + " Undo is available.")
+			} else {
+				announce("The default for \(subject) is \(Catalog.appName(bundleID)).")
+			}
+		case .canceled:
+			announce("Canceled. The default for \(subject) did not change.")
+		case .failed, .notApplied, .ignored:
+			break // the alert says so
+		}
+	}
+
+	private func describe(_ content: Content) -> String {
+		if content.isScheme { return "\(content.id):" }
+		return entries[.types]?.first { $0.id == content.id }?.title ?? content.id
+	}
+
+	private func announce(_ text: String) {
+		announced += 1
+		announcement = Announcement(number: announced, text: text)
+	}
+
+	/** Puts back the application that was the default before the change the offer is for. */
+	@discardableResult
+	func undo() async -> ChangeOutcome? {
+		guard let offer = undoOffer else { return nil }
+		undoOffer = nil
+		let outcome = await change(offer.content, to: .init(bundleID: offer.previous), role: offer.role, rereading: offer.rereading)
+		undoOffer = nil // taking a change back is not itself offered back
+		return outcome
+	}
+
+	func dismissUndo() {
+		undoOffer = nil
 	}
 
 	/**
