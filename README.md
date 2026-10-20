@@ -14,7 +14,7 @@ Feel free to contribute, comment or report issues at https://github.com/Lord-Kam
 * Drag `SwiftDefaultApps.app` to Applications, then open it from Finder or Spotlight.
 * To uninstall, quit SwiftDefaultApps and move the app to the Trash.
 
-The app requires macOS 13 or later and supports both Apple Silicon and Intel Macs. The `swda` command line tool requires macOS 12 or later.
+The app and the `swda` command line tool require macOS 13 or later and support both Apple Silicon and Intel Macs.
 
 ## Installing with brew
 
@@ -25,12 +25,12 @@ The Homebrew formula needs updating for the standalone app. Until then, install 
 With Xcode 15.2 or later installed:
 
 ```bash
-git clone https://github.com/Lord-Kamina/SwiftDefaultApps.git
+git clone --recurse-submodules https://github.com/Lord-Kamina/SwiftDefaultApps.git
 cd SwiftDefaultApps
 ./build.sh
 ```
 
-`build.sh` builds a universal app (arm64 + x86_64), signs the embedded `ThisAppDoesNothing.app` and then the main app with hardened runtime, and verifies the signature. It uses the first `Developer ID Application` identity in your keychain, falling back to an ad-hoc signature for local use. Before installing into `~/Applications`, it quits a running SwiftDefaultApps instance and moves any previously installed copy to `backups/`.
+`build.sh` builds a universal app (arm64 + x86_64), signs the embedded `ThisAppDoesNothing.app` and then the main app with hardened runtime, and verifies the signature. It uses the first `Developer ID Application` identity in your keychain, falling back to an ad-hoc signature for local use (`REQUIRE_SIGNING=1` makes that an error instead, and so does a `SIGN_ID` that is not in the keychain). A signature that does not verify stops the script before anything is installed. Before installing into `~/Applications`, it quits a running SwiftDefaultApps instance and moves any previously installed copy to `backups/`.
 
 ```
 ./build.sh                 build, sign, install
@@ -38,13 +38,14 @@ cd SwiftDefaultApps
 ./build.sh --cli           also build the swda command line tool
 
 SIGN_ID="-"                force an ad-hoc signature
+REQUIRE_SIGNING=1          fail instead of falling back to an ad-hoc signature
 ARCH="arm64"               narrow the build (default: universal)
 DEPLOY_TARGET="13.0"       minimum macOS version
 ```
 
-The app is built at `build/Release/SwiftDefaultApps.app`; with `--cli`, the command line tool is built at `build/Release/swda`. You can also open `SwiftDefaultApps.xcworkspace` or `SwiftDefaultApps.xcodeproj` in Xcode and run the **Build App** scheme.
+The app is built at `build/Release/SwiftDefaultApps.app`; with `--cli`, the command line tool is built at `build/Release/swda` and signed too. The whole output of `xcodebuild` is in `build/build.log`; the script shows the warnings and, if the build fails, the errors. You can also open `SwiftDefaultApps.xcworkspace` or `SwiftDefaultApps.xcodeproj` in Xcode and run the **Build App** scheme.
 
-The CLI dependency at `Packages/SwiftCLI-2.0.3` must use tag `2.0.3+swift5`. Tag `2.0.3` is Swift 3 code and fails to compile (`String.characters` was removed). `build.sh` fetches the correct tag if the dependency is missing.
+The CLI dependency is the Git submodule at `Packages/SwiftCLI-2.0.3`, at the commit this repository records (one commit after tag `2.0.3+swift5`; tag `2.0.3` itself is Swift 3 code and fails to compile). If you cloned without `--recurse-submodules`, `build.sh` runs `git submodule update --init` for you, and stops when the submodule is at some other commit.
 
 ### App UI
 

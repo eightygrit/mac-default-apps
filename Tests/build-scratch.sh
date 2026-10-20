@@ -3,9 +3,9 @@
 #
 # usage: Tests/build-scratch.sh <cli|app|dummy> <output-dir> [deployment-target]
 #
-#   cli     "SwiftDefaultApps CLI.xcodeproj", target SwiftDefaultApps    -> <output-dir>/products/Release/swda   (target 12.0)
+#   cli     "SwiftDefaultApps CLI.xcodeproj", target SwiftDefaultApps    -> <output-dir>/products/Release/swda   (target 13.0)
 #   app     "SwiftDefaultApps.xcodeproj",     target SwiftDefaultApps    -> .../SwiftDefaultApps.app            (target 13.0)
-#   dummy   "AppDoesNothing.xcodeproj",       target ThisAppDoesNothing  -> .../ThisAppDoesNothing.app          (target 12.0)
+#   dummy   "AppDoesNothing.xcodeproj",       target ThisAppDoesNothing  -> .../ThisAppDoesNothing.app          (target 13.0)
 #
 # Prints the result and how many distinct compiler warnings and errors there were. They are also written, one
 # per line as "file:line:col: message" with the repository prefix removed, to <output-dir>/diagnostics.txt;
@@ -19,9 +19,9 @@ set -u
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 kind="${1:-}"; out="${2:-}"
 case "$kind" in
-	cli)   project="SwiftDefaultApps CLI.xcodeproj"; target=SwiftDefaultApps;   dt="${3:-12.0}" ;;
+	cli)   project="SwiftDefaultApps CLI.xcodeproj"; target=SwiftDefaultApps;   dt="${3:-13.0}" ;;
 	app)   project="SwiftDefaultApps.xcodeproj";     target=SwiftDefaultApps;   dt="${3:-13.0}" ;;
-	dummy) project="AppDoesNothing.xcodeproj";       target=ThisAppDoesNothing; dt="${3:-12.0}" ;;
+	dummy) project="AppDoesNothing.xcodeproj";       target=ThisAppDoesNothing; dt="${3:-13.0}" ;;
 	*) sed -n '2,6p' "${BASH_SOURCE[0]}"; exit 2 ;;
 esac
 [ -n "$out" ] || { sed -n '2,6p' "${BASH_SOURCE[0]}"; exit 2; }

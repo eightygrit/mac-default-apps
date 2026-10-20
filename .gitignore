@@ -2,14 +2,15 @@
 .DS_Store
 .Trashes
 
-# Xcode
+# Xcode: per-user state, wherever Xcode puts it
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
+# Build output (the folder is "build" on a case-sensitive volume and "Build" on the others)
 Build/
+build/
 /.build
 
 # Project
-/SwiftDefaultApps.xcworkspace/xcuserdata
-/SwiftDefaultApps.xcodeproj/xcuserdata
-/SwiftDefaultApps CLI.xcodeproj/xcuserdata
-/AppDoesNothing.xcodeproj/xcuserdata
-/build/
 /backups/
