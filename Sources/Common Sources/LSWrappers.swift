@@ -15,6 +15,8 @@ import UniformTypeIdentifiers
 Functions wrapping varied Launch Services tasks to be re-used throughout the application.
 */
 class LSWrappers {
+	/** The subsystem the unified log files this program's messages under: filter by it in Console. */
+	static let logSubsystem = "cl.fail.lordkamina.SwiftDefaultApps"
 	
 	/**
 	Wrapper for commonly-used errors associated to Launch Services.
@@ -136,9 +138,9 @@ class LSWrappers {
 	*/
 	struct HandlerSetter {
 		/// Assigns an application to a UTI for every role, through `NSWorkspace`. Answers when macOS has, which can be when the user has.
-		var forUTI: (_ app: URL, _ type: UTType, _ completion: @escaping (Error?) -> Void) -> Void
+		var forUTI: (_ app: URL, _ type: UTType, _ completion: @escaping @Sendable (Error?) -> Void) -> Void
 		/// Assigns an application to a URI Scheme, through `NSWorkspace`. Answers when macOS has, which can be when the user has.
-		var forScheme: (_ app: URL, _ scheme: String, _ completion: @escaping (Error?) -> Void) -> Void
+		var forScheme: (_ app: URL, _ scheme: String, _ completion: @escaping @Sendable (Error?) -> Void) -> Void
 		/// Assigns an application to a UTI for some roles only, through `LSLegacyRoles`. Answers at once, with a status.
 		var forRoles: (_ uti: String, _ roles: LSRolesMask, _ bundleID: String) -> OSStatus
 
@@ -281,7 +283,7 @@ class LSWrappers {
 		- setter: The calls that change the handler; the system's unless a test says otherwise.
 		- completion: Called exactly once, on any queue, and before this function returns if the request is refused up front (unknown UTI, application not found) or answered by `LSLegacyRoles`.
 		*/
-		static func setDefaultHandler (_ inContent: String, _ inApp: ResolvedApp, _ inRoles: LSRolesMask = .all, setter: HandlerSetter = .system, completion: @escaping (Result<Void, LSErrors>) -> Void) {
+		static func setDefaultHandler (_ inContent: String, _ inApp: ResolvedApp, _ inRoles: LSRolesMask = .all, setter: HandlerSetter = .system, completion: @escaping @Sendable (Result<Void, LSErrors>) -> Void) {
 			// Both paths refuse a UTI the system does not know: recording a preference for it would help nobody.
 			guard let type = UTType(inContent) else { completion(.failure(.unknownUTI)); return }
 			guard LSWrappers.ensureRegistered(inApp) else { completion(.failure(.appNotFound)); return }
@@ -373,7 +375,7 @@ class LSWrappers {
 		- setter: The calls that change the handler; the system's unless a test says otherwise.
 		- completion: Called exactly once, on any queue, and before this function returns if the request is refused up front (malformed scheme, application not found).
 		*/
-		static func setDefaultHandler (_ inScheme: String, _ inApp: ResolvedApp, setter: HandlerSetter = .system, completion: @escaping (Result<Void, LSErrors>) -> Void) {
+		static func setDefaultHandler (_ inScheme: String, _ inApp: ResolvedApp, setter: HandlerSetter = .system, completion: @escaping @Sendable (Result<Void, LSErrors>) -> Void) {
 			guard isValidScheme(inScheme) else { completion(.failure(.invalidScheme)); return }
 			guard LSWrappers.ensureRegistered(inApp) else { completion(.failure(.appNotFound)); return }
 			setter.forScheme(inApp.url, inScheme) { completion(Result(error: $0)) }
@@ -389,23 +391,32 @@ class LSWrappers {
 	- Parameter operation: Starts the operation, given the completion it must call. It may call it before it returns.
 	- Returns: What the operation reported, or `timedOut`.
 	*/
-	static func awaitCompletion (timeout: TimeInterval = 120, _ operation: (@escaping (Result<Void, LSErrors>) -> Void) -> Void) -> Result<Void, LSErrors> {
-		let lock = NSLock()
-		var outcome: Result<Void, LSErrors>?
-		let reported = DispatchSemaphore(value: 0)
-		operation { result in
-			lock.lock(); defer { lock.unlock() }
-			guard outcome == nil else { return }
-			outcome = result
-			reported.signal()
-		}
+	static func awaitCompletion (timeout: TimeInterval = 120, _ operation: (@escaping @Sendable (Result<Void, LSErrors>) -> Void) -> Void) -> Result<Void, LSErrors> {
+		let first = FirstReport()
+		operation { first.report($0) }
 		let deadline = Date(timeIntervalSinceNow: timeout)
-		while reported.wait(timeout: .now() + .milliseconds(50)) == .timedOut && Date() < deadline {
+		while first.reported.wait(timeout: .now() + .milliseconds(50)) == .timedOut && Date() < deadline {
 			RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.001))
 		}
-		lock.lock(); defer { lock.unlock() }
-		if outcome == nil { outcome = .failure(.timedOut) }
-		return outcome!
+		return first.outcome()
+	}
+	/** What `awaitCompletion` waits for: the first report, kept under a lock because it comes from any thread. */
+	private final class FirstReport: @unchecked Sendable {
+		private let lock = NSLock()
+		private var result: Result<Void, LSErrors>?
+		let reported = DispatchSemaphore(value: 0)
+		func report(_ new: Result<Void, LSErrors>) {
+			lock.lock(); defer { lock.unlock() }
+			guard result == nil else { return }
+			result = new
+			reported.signal()
+		}
+		/// The first report, or `timedOut` (which then also wins over a report that comes later).
+		func outcome() -> Result<Void, LSErrors> {
+			lock.lock(); defer { lock.unlock() }
+			if result == nil { result = .failure(.timedOut) }
+			return result!
+		}
 	}
 	/**
 	Turns the applications Launch Services answered with into the strings callers ask for.
@@ -616,7 +627,7 @@ extension Result where Success == Void, Failure == LSWrappers.LSErrors {
 		if mapped == .defaultErr, !(error is LSWrappers.LSErrors) {
 			let described = error as NSError
 			// The unified log keeps NSLog arguments in the clear; the system's own words can contain paths, so they stay private.
-				Logger(subsystem: "cl.fail.lordkamina.SwiftDefaultApps", category: "errors").error("macOS reported an error it has no message for: \(described.localizedDescription, privacy: .private) (\(described.domain, privacy: .public) \(described.code, privacy: .public))")
+				Logger(subsystem: LSWrappers.logSubsystem, category: "errors").error("macOS reported an error it has no message for: \(described.localizedDescription, privacy: .private) (\(described.domain, privacy: .public) \(described.code, privacy: .public))")
 		}
 		self = .failure(mapped)
 	}

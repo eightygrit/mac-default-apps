@@ -22,7 +22,7 @@ The Homebrew formula needs updating for the standalone app. Until then, install 
 
 ## Building from source
 
-With Xcode 15.2 or later installed:
+With Xcode 16 or later installed (the app is compiled in the Swift 6 language mode; `swda` and Do Nothing stay in Swift 5 mode, because SwiftCLI is Swift 5 code):
 
 ```bash
 git clone --recurse-submodules https://github.com/Lord-Kamina/SwiftDefaultApps.git
@@ -153,6 +153,7 @@ See https://github.com/Lord-Kamina/SwiftDefaultApps/issues
     + `build.sh` stops when a signature does not verify, when `SIGN_ID` is not in the keychain (or with `REQUIRE_SIGNING=1`, when there is no Developer ID), and when the build fails; it builds SwiftCLI from the Git submodule and keeps the whole log in `build/build.log`. `swda` and Do Nothing now require macOS 13, like the app.
     + `--app Safari` no longer picks whichever copy scored best: copies are ranked by whether they are outside another bundle, then by folder (the system's, then your Applications folder, then elsewhere), then by the copy Launch Services prefers, and a tie is refused. Do Nothing is accepted only from the folder it ships in or from `/Applications`, and only when its identifier, package type and executable are right.
     + `setHandler --role` with a word that is not a role is an error; it used to mean All. A scheme is checked by a fixed rule (ASCII letters, digits, `+`, `-` and `.`, starting with a letter), so `http` followed by a newline is refused and a scheme of one letter is accepted. Names and paths from the system or the command line are printed with control and bidirectional characters escaped.
+    + The app is compiled in the Swift 6 language mode. All three programs are built with the hardened runtime enabled, release builds are stripped (about half the size), the dead run paths and the missing Info.plist of `swda` are gone, a warning is an error in a Debug build, and the unused `Package.swift`, which could not build, is deleted. A change of a default made by the app is recorded in the unified log (subsystem `cl.fail.lordkamina.SwiftDefaultApps`, category `changes`).
     + The File Types list loads in 0.05 s instead of 3 s, and the default of every type is read only when you group by default application.
   + ### Fixed
     + `swda` crashed (exit 133) on an unrecognized option of more than 40 characters.

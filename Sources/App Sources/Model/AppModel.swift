@@ -9,6 +9,7 @@
 */
 
 import AppKit
+import os
 
 /** How the File Types list is grouped. */
 enum TypeGrouping: String, CaseIterable, Identifiable {
@@ -79,6 +80,7 @@ final class AppModel: ObservableObject {
 	/** How often the handlers of each scheme and type were changed, so that a reading that began before a change is not kept. */
 	private var generations: [Content: Int] = [:]
 	private let access: Catalog.HandlerAccess
+	private static let log = Logger(subsystem: LSWrappers.logSubsystem, category: "changes")
 
 	init(access: Catalog.HandlerAccess = .system) {
 		self.access = access
@@ -296,6 +298,8 @@ final class AppModel: ObservableObject {
 				outcome = .notApplied
 			}
 		}
+		// A record of what this program changed, for whoever wonders later; scheme, type and application identifiers are not private.
+		Self.log.notice("default of \(content.isScheme ? "scheme" : "type", privacy: .public) \(content.id, privacy: .public), role \(role.rawValue, privacy: .public), to \(choice.bundleID, privacy: .public): \(String(describing: outcome), privacy: .public)")
 		return outcome
 	}
 

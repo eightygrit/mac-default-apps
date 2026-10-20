@@ -412,12 +412,17 @@ enum Catalog {
 		return windows.contains { ($0[kCGWindowOwnerPID as String] as? pid_t).map(agents.contains) ?? false }
 	}
 
-	static func concurrentMap<T, U>(_ input: [T], _ transform: (T) -> U) -> [U] {
+	/** The address of a result slot that one iteration of `concurrentMap` writes and no other touches. */
+	private struct Slots<U>: @unchecked Sendable {
+		let base: UnsafeMutablePointer<U?>
+	}
+
+	static func concurrentMap<T: Sendable, U: Sendable>(_ input: [T], _ transform: @Sendable (T) -> U) -> [U] {
 		guard !input.isEmpty else { return [] }
 		var output = [U?](repeating: nil, count: input.count)
 		output.withUnsafeMutableBufferPointer { buffer in
-			let base = buffer.baseAddress!
-			DispatchQueue.concurrentPerform(iterations: input.count) { base[$0] = transform(input[$0]) }
+			let slots = Slots(base: buffer.baseAddress!)
+			DispatchQueue.concurrentPerform(iterations: input.count) { slots.base[$0] = transform(input[$0]) }
 		}
 		return output.map { $0! }
 	}
