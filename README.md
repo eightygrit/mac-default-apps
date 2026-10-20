@@ -10,7 +10,7 @@ Feel free to contribute, comment or report issues at https://github.com/Lord-Kam
 
 ## Installing & Uninstalling
 
-* Download the latest app release from https://github.com/Lord-Kamina/SwiftDefaultApps/releases.
+* There is no download of the standalone app yet (it is listed under [Unreleased](#unreleased) in the release notes): [build it from source](#building-from-source).
 * Drag `SwiftDefaultApps.app` to Applications, then open it from Finder or Spotlight.
 * To uninstall, quit SwiftDefaultApps and move the app to the Trash.
 
@@ -43,6 +43,8 @@ ARCH="arm64"               narrow the build (default: universal)
 DEPLOY_TARGET="13.0"       minimum macOS version
 ```
 
+A build you make yourself and run on the same Mac is not quarantined, so Gatekeeper does not check it. An app you copy to another Mac by download is quarantined, and a build signed ad hoc and not notarized is refused there until you allow it in System Settings → Privacy & Security. `build.sh` signs with the hardened runtime but does not notarize, which takes an Apple Developer ID account and `xcrun notarytool`.
+
 The app is built at `build/Release/SwiftDefaultApps.app`; with `--cli`, the command line tool is built at `build/Release/swda` and signed too. The whole output of `xcodebuild` is in `build/build.log`; the script shows the warnings and, if the build fails, the errors. You can also open `SwiftDefaultApps.xcworkspace` or `SwiftDefaultApps.xcodeproj` in Xcode and run the **Build App** scheme.
 
 The CLI dependency is the Git submodule at `Packages/SwiftCLI-2.0.3`, at the commit this repository records (one commit after tag `2.0.3+swift5`; tag `2.0.3` itself is Swift 3 code and fails to compile). If you cloned without `--recurse-submodules`, `build.sh` runs `git submodule update --init` for you, and stops when the submodule is at some other commit.
@@ -63,6 +65,8 @@ macOS can ask you to confirm a change, such as the default web browser. For a UR
 - The **Viewer**, **Editor** and **Shell** pickers (and `swda --role Viewer|Editor|Shell`) have no replacement. They use `LSCopyDefaultRoleHandlerForContentType`, `LSCopyAllRoleHandlersForContentType` and `LSSetDefaultRoleHandlerForContentType`, which Apple has marked as to be deprecated. `LSLegacyRoles.swift` is the only file that names them, and it looks them up at run time. They answer at once, so a change of one role does not wait for a confirmation. If a later macOS removes them, the app offers only the **Open With** picker and `swda` refuses `--role Viewer|Editor|Shell`. Set `SWDA_NO_LEGACY_ROLES=1` to see that today.
 - No public API lists every URL scheme, application or declared file type, so the lists in the app and `swda getSchemes`, `getApps` and `getUTIs` use three private functions: `_LSCopySchemesAndHandlerURLs`, `_LSCopyAllApplicationURLs` and `_UTCopyDeclaredTypeIdentifiers`. `LSPrivate.swift` is the only file that names them, and it looks them up at run time too. If one is missing, `swda` says that it could not generate the list, and the app shows an empty list and an alert.
 - The reason for looking functions up at run time: a program built for macOS 12 or later binds every function it links when it starts, and is stopped there if one has been removed from the system, even if it never calls it.
+
+Two environment variables are for tests and for checking what a program would do: `SWDA_READ_ONLY=1` makes every change of a default and every registration of an application fail as if macOS had refused it, and `SWDA_NO_LEGACY_ROLES=1` makes the program behave as if macOS no longer had the per-role functions. Both apply to the app and to `swda`.
 
 For a URL scheme or for All roles, `swda setHandler` waits up to two minutes for you to answer a confirmation, and says so if you cancel. A single role is changed at once: `swda` reports success as soon as Launch Services accepts the request. `Tests/README.md` describes how all of this is checked, including the one script that really changes your defaults and puts back what it can.
 
@@ -93,6 +97,8 @@ Run in your terminal the following command (replace my_song.mp3 by your file):
 
 `mdls -name kMDItemContentType -name kMDItemContentTypeTree -name kMDItemKind my_song.mp3`
 
+`swda` reports a failure in two ways. A usage error, or an application it cannot find, goes to standard error with exit status 1. A change that Launch Services refuses (an unknown UTI, a scheme that is not valid, a change macOS did not allow) is printed as `SwiftDefaultApps ERROR <code>: <message>` on standard output **with exit status 0**, so a script must look at the output, not only at the status.
+
 The CLI can also resolve a filename extension to its preferred UTI:
 
 ```bash
@@ -102,9 +108,9 @@ swda setHandler --extension 3mf --app /Applications/YourApp.app
 
 ## Acknowledgments & Attributions
 
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the licenses. Who wrote which file is in the Git history.
+
 - Using jakeheis' SwiftCLI 2.0 as a base for the CLI version located inside the bundle. (https://github.com/jakeheis/SwiftCLI)
-- Using AMTourky's DRYView canned views system (https://github.com/AMTourky/CocoaBindingDryView-ReusableViews/)
-- Using ZamzamKit's SynchronizedArray (https://github.com/ZamzamInc/ZamzamKit)
 - Icon made using the following resources:
 	- Brush, Ruler and Pencil designed by Freepik. (http://www.freepik.com/free-vector/background-of-back-to-school_769298.htm)
 	- Magnifying glass frame designed by Balintseby / Freepik (http://www.freepik.com/free-vector/realistic-magnifying-glass_789215.htm)
@@ -113,8 +119,7 @@ swda setHandler --extension 3mf --app /Applications/YourApp.app
 
 ## Current Version
 
-- Version: 2.0.1
-- Date: 2019-07-26
+The app's version is `MARKETING_VERSION` in `SwiftDefaultApps.xcodeproj` (2.0.1; the release notes below start at [Unreleased](#unreleased)). `swda --version` reports its own, 1.0, which is not kept in step with it.
 
 ## Known Issues
 
@@ -132,6 +137,9 @@ See https://github.com/Lord-Kamina/SwiftDefaultApps/issues
     + A `.gitignore` for Xcode user data, by barijaona ([#87](https://github.com/Lord-Kamina/SwiftDefaultApps/pull/87)).
     + `Tests/`: golden-output, logic and probe scripts, and a guarded script that really changes defaults and puts back what it can. See `Tests/README.md`.
     + `SWDA_NO_LEGACY_ROLES=1` makes the app and `swda` behave as if macOS no longer had the per-role functions.
+    + `SWDA_READ_ONLY=1` makes every change of a default and every registration of an application fail as if macOS had refused it.
+    + `SECURITY.md`, `CONTRIBUTING.md` and `THIRD_PARTY_NOTICES.md`; a GitHub Actions workflow that builds the three targets with warnings fatal and runs the tests.
+    + An application given by name that two different applications share (Siri, or a name that only exists nested inside another application) is refused with a new error, 1001, which lists the candidates and asks for a path.
   + ### Changed
     + The preference pane is replaced by a standalone app (SwiftUI, macOS 13 or later), by ultranity ([#98](https://github.com/Lord-Kamina/SwiftDefaultApps/pull/98)).
     + Deprecated functions and methods (the Launch Services scheme functions, the `UTType…` C functions, `NSWorkspace.fullPath(forApplication:)` and others) are replaced with `NSWorkspace` and `UniformTypeIdentifiers` equivalents wherever one exists. The per-role functions and the three private ones are looked up at run time instead of being linked, so that the removal of one can no longer stop the program from launching.
@@ -142,7 +150,14 @@ See https://github.com/Lord-Kamina/SwiftDefaultApps/issues
     + Do Nothing is registered with `LSRegisterURL` instead of being launched. This has not been tried on a Mac where it was not registered yet; if it is reported as not found, launch it once by hand (see [How to use the "Do Nothing" app](#how-to-use-the-do-nothing-app)).
     + An application given by display name is found by matching the registered applications' file names, because `NSWorkspace.fullPath(forApplication:)` is deprecated and has no replacement.
     + New messages for a canceled change, a change macOS did not allow and a change that timed out. An error that macOS reports and nothing here explains is logged with macOS's own description.
+    + `build.sh` stops when a signature does not verify, when `SIGN_ID` is not in the keychain (or with `REQUIRE_SIGNING=1`, when there is no Developer ID), and when the build fails; it builds SwiftCLI from the Git submodule and keeps the whole log in `build/build.log`. `swda` and Do Nothing now require macOS 13, like the app.
+    + `--app Safari` no longer picks whichever copy scored best: copies are ranked by whether they are outside another bundle, then by folder (the system's, then your Applications folder, then elsewhere), then by the copy Launch Services prefers, and a tie is refused. Do Nothing is accepted only from the folder it ships in or from `/Applications`, and only when its identifier, package type and executable are right.
+    + `setHandler --role` with a word that is not a role is an error; it used to mean All. A scheme is checked by a fixed rule (ASCII letters, digits, `+`, `-` and `.`, starting with a letter), so `http` followed by a newline is refused and a scheme of one letter is accepted. Names and paths from the system or the command line are printed with control and bidirectional characters escaped.
+    + The File Types list loads in 0.05 s instead of 3 s, and the default of every type is read only when you group by default application.
   + ### Fixed
+    + `swda` crashed (exit 133) on an unrecognized option of more than 40 characters.
+    + The Do Nothing helper never created its delegate, because the nib that Info.plist named had been deleted; it now installs it in code, and it logs the scheme of a URL it is asked to open and nothing more.
+    + Typing `mailto` in the custom-scheme field gave `mailto` to Do Nothing; the existing scheme is selected instead. Collapsing the "No Default Application" group no longer hides the Internet, URL Schemes and Applications lists; the search field's clear button clears the list's filter; leaving a detail while macOS waits for your confirmation no longer allows a second, overlapping change; the Applications tab shows the copy Make Default acts on; types macOS does not know are not offered Make Default.
     + A crash in the error messages when no application name was available.
     + The Do Nothing application no longer treats the URL it was started for as a format string when logging it.
     + Typo "succesfully" in the success message ([#21](https://github.com/Lord-Kamina/SwiftDefaultApps/issues/21)).

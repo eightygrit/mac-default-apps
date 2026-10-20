@@ -1,9 +1,10 @@
 /*
  * ----------------------------------------------------------------------------
  * "THE BEER-WARE LICENSE" (Revision 42):
- * <g.litenstein@gmail.com> wrote this file. As long as you retain this notice you
- * can do whatever you want with this stuff. If we meet some day, and you think
- * this stuff is worth it, you can buy me a beer in return., Gregorio Litenstein.
+ * The people who wrote this file are named in its history in version control.
+ * As long as you retain this notice you can do whatever you want with this
+ * stuff. If we meet some day, and you think this stuff is worth it, you can
+ * buy one of us a beer in return.
  * ----------------------------------------------------------------------------
  */
 
