@@ -10,6 +10,13 @@
 # test has to refuse them (see the comment above them in main.swift).
 set -eu
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Nothing here may change a default handler or register an application for real. Every check that calls a setter gives it a
+# stand-in (the two lines marked "real call, guarded" are the exceptions, and SWDA_READ_ONLY refuses both), and the program runs with SWDA_READ_ONLY=1 as well, so that a call that slipped through is refused by the code itself.
+export SWDA_READ_ONLY=1
+if grep -nE 'setDefaultHandler\(|ensureRegistered\(' "$here/main.swift" | grep -vE 'setter:|register:|real call, guarded'; then
+	echo "Tests/logic/main.swift: a call above has no stand-in; it could write a default handler for real if the code under test were wrong." >&2
+	exit 1
+fi
 repo="$(cd "$here/../.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

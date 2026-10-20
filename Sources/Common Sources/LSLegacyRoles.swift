@@ -97,6 +97,8 @@ enum LSLegacyRoles {
 	*/
 	static func setDefaultHandler(_ uti: String, _ roles: LSRolesMask, bundleID: String) -> OSStatus {
 		guard let function = symbol("LSSetDefaultRoleHandlerForContentType", as: SetDefaultHandler.self) else { return LSWrappers.LSErrors.incompatibleSys.rawValue }
+		// The function accepts a UTI nobody declared and an application nobody installed, and records them: only this switch stops it.
+		guard !LSWrappers.isReadOnly else { return LSWrappers.LSErrors.permissionDenied.rawValue }
 		return function(uti as CFString, roles.rawValue, bundleID as CFString)
 	}
 }

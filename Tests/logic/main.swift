@@ -19,6 +19,24 @@ func check<T: Equatable>(_ name: String, _ actual: T, _ expected: T) {
 }
 func section(_ title: String) { if verbose { print("\n-- \(title)") } }
 
+// Nothing in this file may write a default handler or register an application for real: every call of a setter is given
+// a stand-in that only records what it is asked (`run.sh` refuses a call that is not), and the scripts that run this set
+// SWDA_READ_ONLY=1, so that even a call that slipped through could change nothing.
+// A stand-in for the three calls that change a default: it records what it is asked and answers as told, so that the
+// checks see exactly which call a request reaches, with which arguments.
+final class Calls { var log: [String] = [] }
+func recorder(_ calls: Calls, system error: Error? = nil, roles status: OSStatus = 0) -> LSWrappers.HandlerSetter {
+    LSWrappers.HandlerSetter(
+        forUTI: { url, type, done in calls.log.append("uti \(url.path) \(type.identifier)"); done(error) },
+        forScheme: { url, scheme, done in calls.log.append("scheme \(url.path) \(scheme)"); done(error) },
+        forRoles: { uti, roles, id in calls.log.append("roles \(uti) \(roles.rawValue) \(id)"); return status })
+}
+func outcome(_ operation: (@escaping (Result<Void, E>) -> Void) -> Void) -> [OSStatus] {
+    var reports: [OSStatus] = []
+    operation { reports.append(code($0)) }
+    return reports
+}
+
 // MARK: - LSErrors: raw values and messages (the CLI prints both)
 
 section("LSErrors")
@@ -152,8 +170,8 @@ check("an unknown bundle identifier is not installed", LSWrappers.isAppInstalled
 section("planted copies")
 let planting = FileManager.default.temporaryDirectory.appendingPathComponent("swda-logic-\(ProcessInfo.processInfo.processIdentifier)")
 try? FileManager.default.removeItem(at: planting)
-func plant(_ relativePath: String, bundleID: String) -> String {
-    let bundle = planting.appendingPathComponent(relativePath)
+func plant(_ relativePath: String, bundleID: String) -> String { plantAt(planting.appendingPathComponent(relativePath), bundleID: bundleID) }
+func plantAt(_ bundle: URL, bundleID: String) -> String {
     let name = bundle.deletingPathExtension().lastPathComponent
     let macOS = bundle.appendingPathComponent("Contents/MacOS")
     try? FileManager.default.createDirectory(at: macOS, withIntermediateDirectories: true)
@@ -203,7 +221,23 @@ for (text, shaped) in [("com.apple.TextEdit", true), ("cl.fail.lordkamina.ThisAp
     check("isBundleID(\(text.debugDescription))", LSWrappers.isBundleID(text), shaped)
 }
 check("a planted Do Nothing with the right identifier is not genuine", DoNothingApp.isGenuine(URL(fileURLWithPath: plant("Downloads/ThisAppDoesNothing.app", bundleID: DoNothingApp.bundleID))), false)
-check("a planted Do Nothing is not registered on demand", LSWrappers.ensureRegistered(LSWrappers.ResolvedApp(url: URL(fileURLWithPath: planting.appendingPathComponent("Downloads/ThisAppDoesNothing.app").path), bundleID: DoNothingApp.bundleID)), false)
+var registrations: [URL] = []
+check("a planted Do Nothing is not registered on demand", LSWrappers.ensureRegistered(LSWrappers.ResolvedApp(url: URL(fileURLWithPath: planting.appendingPathComponent("Downloads/ThisAppDoesNothing.app").path), bundleID: DoNothingApp.bundleID), register: { registrations.append($0); return true }), false)
+check("... and nothing was registered", registrations, [])
+// Do Nothing is handed out from a folder the program ships it in. A copy there is taken for Do Nothing only if it is Do Nothing:
+// the same name and place, with another identifier or without a program to run, is not. (`Bundle` remembers a bundle by its
+// path, so each case has a folder of its own.)
+func genuine(_ folder: String, bundleID: String, programmed: Bool = true, allowing allowed: String? = nil) -> Bool {
+    let home = planting.appendingPathComponent(folder)
+    let copy = home.appendingPathComponent(DoNothingApp.fileName)
+    _ = plantAt(copy, bundleID: bundleID)
+    if !programmed { try? FileManager.default.removeItem(at: copy.appendingPathComponent("Contents/MacOS")) }
+    return DoNothingApp.isGenuine(copy, allowed: [planting.appendingPathComponent(allowed ?? folder)])
+}
+check("a copy of Do Nothing in a folder it ships in is genuine", genuine("Shipped", bundleID: DoNothingApp.bundleID), true)
+check("... but not in any other folder", genuine("Shipped2", bundleID: DoNothingApp.bundleID, allowing: "Somewhere Else"), false)
+check("a copy with another identifier in the same place is not", genuine("Impostor", bundleID: "org.example.not-do-nothing"), false)
+check("a copy with no program to run in the same place is not", genuine("Hollow", bundleID: DoNothingApp.bundleID, programmed: false), false)
 check("an application that is not Do Nothing is not genuine", DoNothingApp.isGenuine(URL(fileURLWithPath: textEdit)), false)
 check("a missing Do Nothing is not genuine", DoNothingApp.isGenuine(URL(fileURLWithPath: "/nonexistent/ThisAppDoesNothing.app")), false)
 check("an ambiguous name asks for a path", E.ambiguousApp.print(argument: (app: "NoSuchAppAnywhere", content: nil)),
@@ -212,11 +246,40 @@ check("1001 is ours", E(value: 1001), .ambiguousApp)
 check("1001 from the system is not", E(NSError(domain: NSOSStatusErrorDomain, code: 1001)), .defaultErr)
 check("what was typed is shown with its control characters escaped", E.notAnApp.print(argument: (app: "a\u{1B}[2J", content: nil)),
       "SwiftDefaultApps ERROR -10811: a\\u{1B}[2J is not a valid application.")
+func plantBundle(_ relativePath: String, packageType: String?, bundleID: String?) -> String {
+    let bundle = planting.appendingPathComponent(relativePath)
+    try? FileManager.default.createDirectory(at: bundle.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+    var info: [String: Any] = [:]
+    if let packageType { info["CFBundlePackageType"] = packageType }
+    if let bundleID { info["CFBundleIdentifier"] = bundleID }
+    (info as NSDictionary).write(to: bundle.appendingPathComponent("Contents/Info.plist"), atomically: true)
+    return bundle.path
+}
+func resolved(_ input: String, copyPaths: @escaping (String) -> [String] = { LSWrappers.copyAppPaths(named: $0) }) -> (status: OSStatus, bundleID: String?, path: String?) {
+    switch LSWrappers.resolveApp(input, copyPaths: copyPaths) {
+    case .success(let app): return (0, app.bundleID, app.url.resolvingSymlinksInPath().path)
+    case .failure(let error): return (error.rawValue, nil, nil)
+    }
+}
+let planted = resolved(plant("Elsewhere/Planted.app", bundleID: "org.example.planted"))
+check("a path to an application resolves to its own identifier", planted.bundleID, "org.example.planted")
+check("a path to an application resolves to that very copy", planted.path, planting.appendingPathComponent("Elsewhere/Planted.app").resolvingSymlinksInPath().path)
+check("a name that two applications share is not guessed at", resolved("Foo", copyPaths: { _ in [inDisk, inDownloads2] }).status, E.ambiguousApp.rawValue)
+check("a name that one application has resolves to it", resolved("Foo", copyPaths: { _ in [inDisk] }).bundleID, "org.example.foo")
+check("a name that nothing has is not an application", resolved("Foo", copyPaths: { _ in [] }).status, E.notAnApp.rawValue)
+check("a plug-in bundle is not an application", resolved(plantBundle("Elsewhere/Plugin.app", packageType: "BNDL", bundleID: "org.example.plugin")).status, E.notAnApp.rawValue)
+check("a bundle without a package type is not a valid package", resolved(plantBundle("Elsewhere/Bare.app", packageType: nil, bundleID: "org.example.bare")).status, E.invalidBundle.rawValue)
+check("an application without a bundle identifier is not usable", resolved(plantBundle("Elsewhere/Nameless.app", packageType: "APPL", bundleID: nil)).status, E.notAnApp.rawValue)
+check("a directory that is not a bundle is not a valid package", resolved(planting.appendingPathComponent("Elsewhere").path).status, E.invalidBundle.rawValue)
+check("a file URL to an application resolves too", resolved(URL(fileURLWithPath: planted.path ?? "").absoluteString).bundleID, "org.example.planted")
+check("a file URL to a plug-in bundle is not an application", resolved(URL(fileURLWithPath: planting.appendingPathComponent("Elsewhere/Plugin.app").path).absoluteString).status, E.notAnApp.rawValue)
 try? FileManager.default.removeItem(at: planting)
 
 // MARK: - Setters: requests that must be refused before anything is written
 
 section("setters refuse before writing")
+let noWrites = Calls()
+let untouched = recorder(noWrites)
 // A refusal reports at once, exactly once, and before the setter returns.
 func refusal(_ operation: (@escaping (Result<Void, E>) -> Void) -> Void) -> E? {
     var reports: [Result<Void, E>] = []
@@ -228,22 +291,61 @@ func refusal(_ operation: (@escaping (Result<Void, E>) -> Void) -> Void) -> E? {
 // application is what gets refused, one that nobody depends on: were a check ever skipped, nothing of value could be changed.
 let harmlessUTI = "public.xbitmap-image"
 let missingApp = LSWrappers.ResolvedApp(url: URL(fileURLWithPath: "/nonexistent/Foo.app"), bundleID: "org.nonexistent.app")
-check("scheme with a space", refusal { LSWrappers.Schemes.setDefaultHandler("bad scheme", missingApp, completion: $0) }, .invalidScheme)
-check("scheme starting with a digit", refusal { LSWrappers.Schemes.setDefaultHandler("1bad", missingApp, completion: $0) }, .invalidScheme)
-check("scheme handler that is not installed", refusal { LSWrappers.Schemes.setDefaultHandler("nosuchscheme", missingApp, completion: $0) }, .appNotFound)
-check("UTI handler that is not installed", refusal { LSWrappers.UTIs.setDefaultHandler(harmlessUTI, missingApp, .all, completion: $0) }, .appNotFound)
-check("UTI handler that is not installed, for one role", refusal { LSWrappers.UTIs.setDefaultHandler(harmlessUTI, missingApp, .viewer, completion: $0) }, .appNotFound)
-check("an application that is not installed is not registered on demand", LSWrappers.ensureRegistered(missingApp), false)
+check("scheme with a space", refusal { LSWrappers.Schemes.setDefaultHandler("bad scheme", missingApp, setter: untouched, completion: $0) }, .invalidScheme)
+check("scheme starting with a digit", refusal { LSWrappers.Schemes.setDefaultHandler("1bad", missingApp, setter: untouched, completion: $0) }, .invalidScheme)
+check("scheme handler that is not installed", refusal { LSWrappers.Schemes.setDefaultHandler("nosuchscheme", missingApp, setter: untouched, completion: $0) }, .appNotFound)
+check("UTI handler that is not installed", refusal { LSWrappers.UTIs.setDefaultHandler(harmlessUTI, missingApp, .all, setter: untouched, completion: $0) }, .appNotFound)
+check("UTI handler that is not installed, for one role", refusal { LSWrappers.UTIs.setDefaultHandler(harmlessUTI, missingApp, .viewer, setter: untouched, completion: $0) }, .appNotFound)
+check("an application that is not installed is not registered on demand", LSWrappers.ensureRegistered(missingApp, register: { _ in false }), false)
 if case .success(let textEdit) = LSWrappers.resolveApp("com.apple.TextEdit") {
-    check("a UTI nobody declared, for an installed application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, completion: $0) }, .unknownUTI)
+    check("a UTI nobody declared, for an installed application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, setter: untouched, completion: $0) }, .unknownUTI)
 } else {
     check("TextEdit resolves", false, true)
 }
-check("a UTI nobody declared, for a missing application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", missingApp, completion: $0) }, .unknownUTI)
-check("a UTI nobody declared, for one role and a missing application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", missingApp, .viewer, completion: $0) }, .unknownUTI)
+check("a UTI nobody declared, for a missing application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", missingApp, setter: untouched, completion: $0) }, .unknownUTI)
+check("a UTI nobody declared, for one role and a missing application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", missingApp, .viewer, setter: untouched, completion: $0) }, .unknownUTI)
 if case .success(let textEdit) = LSWrappers.resolveApp("com.apple.TextEdit") {
-    check("a UTI nobody declared, for one role and an installed application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, .viewer, completion: $0) }, .unknownUTI)
-    check("a UTI nobody declared, for viewer and editor", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, [.viewer, .editor], completion: $0) }, .unknownUTI)
+    check("a UTI nobody declared, for one role and an installed application", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, .viewer, setter: untouched, completion: $0) }, .unknownUTI)
+    check("a UTI nobody declared, for viewer and editor", refusal { LSWrappers.UTIs.setDefaultHandler("no.such.uti", textEdit, [.viewer, .editor], setter: untouched, completion: $0) }, .unknownUTI)
+}
+check("none of the refusals reached the system", noWrites.log, [])
+
+// MARK: - Setters: what a request that gets through asks the system for
+
+section("setters call the system as asked")
+if case .success(let editor) = LSWrappers.resolveApp("com.apple.TextEdit") {
+    let path = editor.url.path
+    func uti(_ roles: LSRolesMask, _ setter: LSWrappers.HandlerSetter) -> [OSStatus] { outcome { LSWrappers.UTIs.setDefaultHandler(harmlessUTI, editor, roles, setter: setter, completion: $0) } }
+    let calls = Calls()
+    check("All roles go through NSWorkspace, once", uti(.all, recorder(calls)), [0])
+    check("... as the application at that path and the UTI", calls.log, ["uti \(path) \(harmlessUTI)"])
+    calls.log = []
+    check("Viewer, Editor and Shell together are All roles", uti([.viewer, .editor, .shell], recorder(calls)), [0])
+    check("... and go through NSWorkspace too", calls.log, ["uti \(path) \(harmlessUTI)"])
+    for (name, roles) in [("Viewer", LSRolesMask.viewer), ("Editor", .editor), ("Shell", .shell), ("Viewer and Editor", [.viewer, .editor]), ("Editor and Shell", [.editor, .shell])] {
+        calls.log = []
+        check("\(name) alone is not widened: it reports once", uti(roles, recorder(calls)), [0])
+        check("\(name) alone is one call for those roles, by bundle identifier", calls.log, ["roles \(harmlessUTI) \(roles.rawValue) com.apple.TextEdit"])
+    }
+    calls.log = []
+    check("a status from the per-role call is the answer", uti(.viewer, recorder(calls, roles: -54)), [E.permissionDenied.rawValue])
+    check("an unknown status from the per-role call is a plain failure", uti(.viewer, recorder(calls, roles: -43)), [E.defaultErr.rawValue])
+    check("a canceled confirmation is reported as canceled", uti(.all, recorder(calls, system: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))), [E.canceled.rawValue])
+    check("a refusal from the system is reported as it is", uti(.all, recorder(calls, system: NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError))), [E.permissionDenied.rawValue])
+    calls.log = []
+    check("a scheme goes through NSWorkspace, once", outcome { LSWrappers.Schemes.setDefaultHandler("web+example", editor, setter: recorder(calls), completion: $0) }, [0])
+    check("... with the scheme as given", calls.log, ["scheme \(path) web+example"])
+    // Nothing that is refused up front reaches the system at all.
+    calls.log = []
+    check("a UTI nobody declared writes nothing", uti(.viewer, recorder(calls)).count, 1)
+    check("an invalid scheme is refused", outcome { LSWrappers.Schemes.setDefaultHandler("bad scheme", editor, setter: recorder(calls), completion: $0) }, [E.invalidScheme.rawValue])
+    check("an application that is not installed is refused", outcome { LSWrappers.UTIs.setDefaultHandler(harmlessUTI, missingApp, .all, setter: recorder(calls), completion: $0) }, [E.appNotFound.rawValue])
+    check("... for one role too", outcome { LSWrappers.UTIs.setDefaultHandler(harmlessUTI, missingApp, .viewer, setter: recorder(calls), completion: $0) }, [E.appNotFound.rawValue])
+    check("... for a scheme too", outcome { LSWrappers.Schemes.setDefaultHandler("web+example", missingApp, setter: recorder(calls), completion: $0) }, [E.appNotFound.rawValue])
+    check("an unknown UTI is refused", outcome { LSWrappers.UTIs.setDefaultHandler("no.such.uti", editor, .all, setter: recorder(calls), completion: $0) }, [E.unknownUTI.rawValue])
+    check("the refusals wrote nothing", calls.log.filter { !$0.hasPrefix("roles \(harmlessUTI)") }, [])
+} else {
+    check("TextEdit resolves", false, true)
 }
 
 // MARK: - Waiting for a completion (the command line, and the app on a background queue)
@@ -401,7 +503,8 @@ check("an unknown UTI has no handlers", LSWrappers.UTIs.copyAllHandlers("no.such
 check("the wrapper answers with the bundle identifier on request", LSWrappers.UTIs.copyDefaultHandler("public.html", inRoles: .all, asPath: false), htmlHandler)
 check("the wrapper answers with a path by default", LSWrappers.UTIs.copyDefaultHandler("public.html", inRoles: .all)?.hasSuffix(".app"), true)
 // With SWDA_NO_LEGACY_ROLES set the lookups fail, as they would on a system that removed the functions.
-// The write below names a UTI and an application that do not exist, so nothing could change even if the switch failed.
+// The write below is the one real call in this file. It names a UTI and an application that do not exist, which is no protection
+// (the function records both), so it is guarded twice: by this switch, and by SWDA_READ_ONLY, which makes it refuse.
 setenv("SWDA_NO_LEGACY_ROLES", "1", 1)
 check("the functions are unavailable when switched off", LSLegacyRoles.isAvailable, false)
 check("no default handler when switched off", LSLegacyRoles.copyDefaultHandlerID("public.html", .all), nil)
@@ -410,7 +513,7 @@ check("the wrapper finds no default handler when switched off", LSWrappers.UTIs.
 check("the wrapper finds no handlers when switched off", LSWrappers.UTIs.copyAllHandlers("public.html", inRoles: .viewer), nil)
 check("a request for All roles does not need the functions", LSWrappers.UTIs.copyDefaultHandler("public.html"), NSWorkspace.shared.urlForApplication(toOpen: htmlType)?.path)
 check("a list for All roles does not need them either", LSWrappers.UTIs.copyAllHandlers("public.html")?.isEmpty, false)
-check("writing reports an incompatible system when switched off", LSLegacyRoles.setDefaultHandler("no.such.uti", .all, bundleID: "org.nonexistent.app"), E.incompatibleSys.rawValue)
+check("writing reports an incompatible system when switched off", LSLegacyRoles.setDefaultHandler("no.such.uti", .all, bundleID: "org.nonexistent.app"), E.incompatibleSys.rawValue) // real call, guarded
 unsetenv("SWDA_NO_LEGACY_ROLES")
 check("the functions are available again once the switch is off", LSLegacyRoles.isAvailable, true)
 
@@ -436,6 +539,15 @@ check("the dictionary formatter uses it", copyDictionaryAsString([(key: "k\u{1B}
 check("role names", ["viewer", "EDITOR", "Shell", "all", "bogus", ""].map { LSLegacyRoles.mask(named: $0)?.rawValue },
       [LSRolesMask.viewer.rawValue, LSRolesMask.editor.rawValue, LSRolesMask.shell.rawValue, LSRolesMask.all.rawValue, nil, nil])
 check("a program without a bundle identifier is the CLI", areWeCLI(), true)
+check("the checks run read-only", LSWrappers.isReadOnly, true)
+// The checks of the read-only switch must be harmless even if the switch were broken, so they ask for what cannot be written:
+// an application that is not there for the two calls of NSWorkspace, and the lookup switched off for the per-role one.
+let nowhere = URL(fileURLWithPath: "/nonexistent/Foo.app")
+check("the system's setter refuses to write a UTI when read-only", outcome { done in LSWrappers.HandlerSetter.system.forUTI(nowhere, UTType("public.xbitmap-image")!) { done($0.map { .failure(E($0)) } ?? .success(())) } }, [E.permissionDenied.rawValue])
+check("... a scheme", outcome { done in LSWrappers.HandlerSetter.system.forScheme(nowhere, "nosuchscheme") { done($0.map { .failure(E($0)) } ?? .success(())) } }, [E.permissionDenied.rawValue])
+setenv("SWDA_NO_LEGACY_ROLES", "1", 1)
+check("... some roles", LSWrappers.HandlerSetter.system.forRoles("public.xbitmap-image", .viewer, "org.nonexistent.app"), E.permissionDenied.rawValue)
+unsetenv("SWDA_NO_LEGACY_ROLES")
 
 print("\(checks - failures) of \(checks) checks passed" + (failures == 0 ? "" : ", \(failures) FAILED"))
 exit(failures == 0 ? 0 : 1)

@@ -33,13 +33,14 @@ enum DoNothingApp {
 	/**
 	Whether an application is Do Nothing: the right bundle identifier and package type, a program to run, and a place it may be handed out from.
 	- Parameter url: An application bundle.
+	- Parameter allowed: The folders it may be in; the program's own and `/Applications` unless a test says otherwise.
 	*/
-	static func isGenuine(_ url: URL) -> Bool {
+	static func isGenuine(_ url: URL, allowed: [URL]? = nil) -> Bool {
 		guard let bundle = Bundle(url: url), bundle.bundleIdentifier == bundleID,
 			  bundle.object(forInfoDictionaryKey: "CFBundlePackageType") as? String == "APPL",
 			  let executable = bundle.executableURL, FileManager.default.isExecutableFile(atPath: executable.path) else { return false }
 		let folder = url.resolvingSymlinksInPath().deletingLastPathComponent().path
-		return homes.contains { $0.resolvingSymlinksInPath().path == folder }
+		return (allowed ?? homes).contains { $0.resolvingSymlinksInPath().path == folder }
 	}
 
 	/**
@@ -49,6 +50,6 @@ enum DoNothingApp {
 	static func copyURL() -> URL? {
 		let registered = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: bundleID)
 		let shipped = homes.map { $0.appendingPathComponent(fileName) }
-		return (registered + shipped).first(where: isGenuine)
+		return (registered + shipped).first { isGenuine($0) }
 	}
 }

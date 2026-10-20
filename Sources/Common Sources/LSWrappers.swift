@@ -130,6 +130,47 @@ class LSWrappers {
 		}
 	}
 	/**
+	The three calls that change a default handler, gathered in one place so that a test can stand in for them and see which one a
+	request reaches, and with what, without writing a default. The setters below take one as a parameter and use the system's
+	unless they are given another; nothing else in the program ever changes a default.
+	*/
+	struct HandlerSetter {
+		/// Assigns an application to a UTI for every role, through `NSWorkspace`. Answers when macOS has, which can be when the user has.
+		var forUTI: (_ app: URL, _ type: UTType, _ completion: @escaping (Error?) -> Void) -> Void
+		/// Assigns an application to a URI Scheme, through `NSWorkspace`. Answers when macOS has, which can be when the user has.
+		var forScheme: (_ app: URL, _ scheme: String, _ completion: @escaping (Error?) -> Void) -> Void
+		/// Assigns an application to a UTI for some roles only, through `LSLegacyRoles`. Answers at once, with a status.
+		var forRoles: (_ uti: String, _ roles: LSRolesMask, _ bundleID: String) -> OSStatus
+
+		/// The real calls, or `refusing` when `LSWrappers.isReadOnly`.
+		static var system: HandlerSetter {
+			if LSWrappers.isReadOnly { return .refusing }
+			return HandlerSetter(
+				forUTI: { NSWorkspace.shared.setDefaultApplication(at: $0, toOpen: $1, completion: $2) },
+				forScheme: { NSWorkspace.shared.setDefaultApplication(at: $0, toOpenURLsWithScheme: $1, completion: $2) },
+				forRoles: { LSLegacyRoles.setDefaultHandler($0, $1, bundleID: $2) })
+		}
+
+		/// Calls that change nothing and fail the way macOS fails when it does not allow a change.
+		static var refusing: HandlerSetter {
+			let denied = NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM))
+			return HandlerSetter(
+				forUTI: { _, _, done in done(denied) },
+				forScheme: { _, _, done in done(denied) },
+				forRoles: { _, _, _ in LSErrors.permissionDenied.rawValue })
+		}
+	}
+	/**
+	Whether the environment variable `SWDA_READ_ONLY=1` is set. It makes every change of a default handler, and every registration
+	of an application, fail as if macOS had not allowed it, whoever asks. The test scripts set it, so that a test, or a program that
+	is being broken on purpose, cannot write a default even by accident; a check that must see what a request would do passes a
+	`HandlerSetter` of its own instead.
+	*/
+	static var isReadOnly: Bool {
+		guard let value = getenv("SWDA_READ_ONLY") else { return false }
+		return String(cString: value) == "1"
+	}
+	/**
 	An application that passed the sanity checks in `resolveApp(_:)`: where it lives and what Launch Services calls it.
 	*/
 	struct ResolvedApp {
@@ -237,17 +278,18 @@ class LSWrappers {
 		- inContent: A Uniform Type Identifier.
 		- inApp: An application resolved by `resolveApp(_:)`. Resolving "None" selects Do Nothing, which disables the default handler for that UTI.
 		- inRoles: The specified Launch Services Role to modify. Can correspond to "Editor", "Viewer", "Shell" or "None". A request for All roles (see `LSLegacyRoles.isAllRoles(_:)`) is handed to `NSWorkspace`; a narrower one to `LSLegacyRoles`, which answers at once.
+		- setter: The calls that change the handler; the system's unless a test says otherwise.
 		- completion: Called exactly once, on any queue, and before this function returns if the request is refused up front (unknown UTI, application not found) or answered by `LSLegacyRoles`.
 		*/
-		static func setDefaultHandler (_ inContent: String, _ inApp: ResolvedApp, _ inRoles: LSRolesMask = .all, completion: @escaping (Result<Void, LSErrors>) -> Void) {
+		static func setDefaultHandler (_ inContent: String, _ inApp: ResolvedApp, _ inRoles: LSRolesMask = .all, setter: HandlerSetter = .system, completion: @escaping (Result<Void, LSErrors>) -> Void) {
 			// Both paths refuse a UTI the system does not know: recording a preference for it would help nobody.
 			guard let type = UTType(inContent) else { completion(.failure(.unknownUTI)); return }
 			guard LSWrappers.ensureRegistered(inApp) else { completion(.failure(.appNotFound)); return }
 			if LSLegacyRoles.isAllRoles(inRoles) {
-				NSWorkspace.shared.setDefaultApplication(at: inApp.url, toOpen: type) { completion(Result(error: $0)) }
+				setter.forUTI(inApp.url, type) { completion(Result(error: $0)) }
 			}
 			else {
-				let status = LSLegacyRoles.setDefaultHandler(inContent, inRoles, bundleID: inApp.bundleID)
+				let status = setter.forRoles(inContent, inRoles, inApp.bundleID)
 				completion(status == 0 ? .success(()) : .failure(LSErrors(value: status)))
 			}
 		}
@@ -328,12 +370,13 @@ class LSWrappers {
 		- Parameters:
 		- inScheme: A valid URI Scheme.
 		- inApp: An application resolved by `resolveApp(_:)`. Resolving "None" selects Do Nothing, which disables the default handler for that URI Scheme.
+		- setter: The calls that change the handler; the system's unless a test says otherwise.
 		- completion: Called exactly once, on any queue, and before this function returns if the request is refused up front (malformed scheme, application not found).
 		*/
-		static func setDefaultHandler (_ inScheme: String, _ inApp: ResolvedApp, completion: @escaping (Result<Void, LSErrors>) -> Void) {
+		static func setDefaultHandler (_ inScheme: String, _ inApp: ResolvedApp, setter: HandlerSetter = .system, completion: @escaping (Result<Void, LSErrors>) -> Void) {
 			guard isValidScheme(inScheme) else { completion(.failure(.invalidScheme)); return }
 			guard LSWrappers.ensureRegistered(inApp) else { completion(.failure(.appNotFound)); return }
-			NSWorkspace.shared.setDefaultApplication(at: inApp.url, toOpenURLsWithScheme: inScheme) { completion(Result(error: $0)) }
+			setter.forScheme(inApp.url, inScheme) { completion(Result(error: $0)) }
 		}
 	}
 	
@@ -397,15 +440,16 @@ class LSWrappers {
 	/**
 	Makes sure Launch Services knows an application before a handler is assigned to it. Only Do Nothing is ever registered on demand (launching it used to do that as a side effect); any other application must already be registered.
 	- Parameter app: An application resolved by `resolveApp(_:)`.
+	- Parameter register: Registers an application with Launch Services; a test passes its own.
 	- Returns: `true` if Launch Services knows the application, `false` if it does not and could not be made to.
 	*/
-	static func ensureRegistered (_ app: ResolvedApp) -> Bool {
+	static func ensureRegistered (_ app: ResolvedApp, register: (URL) -> Bool = { !LSWrappers.isReadOnly && LSRegisterURL($0 as CFURL, true) == noErr }) -> Bool {
 		guard FileManager.default.fileExists(atPath: app.url.path) else { return false }
 		guard app.bundleID == DoNothingApp.bundleID else { return isAppInstalled(withBundleID: app.bundleID) }
 		// Another copy of Do Nothing can be the registered one (a stale build, say); what is handed out is the copy that was chosen.
 		guard DoNothingApp.isGenuine(app.url) else { return false }
 		let known = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: app.bundleID).map { $0.resolvingSymlinksInPath().path }
-		return known.contains(app.url.resolvingSymlinksInPath().path) || LSRegisterURL(app.url as CFURL, true) == noErr
+		return known.contains(app.url.resolvingSymlinksInPath().path) || register(app.url)
 	}
 	/**
 	Where a copy of an application lives, from the place a copy can be trusted most to the place it can be trusted least. Only an administrator can write to the first, so a program running as the user cannot put a look-alike there.
@@ -477,9 +521,10 @@ class LSWrappers {
 	Performs a myriad of sanity checks on user input corresponding to a possible application. The main purpose of this function is to make sure we're passing a value as sane as possible to the setHandler functions.
 	- See Also: `enum LSErrors` above.
 	- Parameter inParam: The application to locate. It might correspond to a file-system URL, a POSIX path, a display name, a bundle identifier, or "None".
+	- Parameter copyPaths: Finds the registered copies of an application by name; a test passes its own.
 	- Returns: The application, or the error that says why it cannot be used. The bundle identifier of the result is the one in the application's own Info.plist, whatever spelling was typed.
 	*/
-	static func resolveApp (_ inParam: String) -> Result<ResolvedApp, LSErrors> {
+	static func resolveApp (_ inParam: String, copyPaths: (String) -> [String] = { copyAppPaths(named: $0) }) -> Result<ResolvedApp, LSErrors> {
 		var errCode = OSStatus()
 		let filemanager = FileManager.default
 		func app(from bundle: Bundle, allowing types: Set<String>) -> Result<ResolvedApp, LSErrors> {
@@ -494,7 +539,7 @@ class LSWrappers {
 		if isBundleID(inParam), let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: inParam) { // Check whether we have a valid Bundle ID for an application.
 			return .success(ResolvedApp(url: url, bundleID: Bundle(url: url)?.bundleIdentifier ?? inParam))
 		}
-		let appPaths = copyAppPaths(named: inParam) // Or an application designed by name
+		let appPaths = copyPaths(inParam) // Or an application designed by name
 		if appPaths.count > 1 { return .failure(.ambiguousApp) }
 		if let appPath = appPaths.first {
 			if let bundle = Bundle(path: appPath) { return app(from: bundle, allowing: ["APPL", "FNDR"]) }
