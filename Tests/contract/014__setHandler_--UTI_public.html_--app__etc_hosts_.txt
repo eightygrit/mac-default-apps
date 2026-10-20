@@ -1,0 +1,5 @@
+$ swda setHandler --UTI public.html --app /etc/hosts
+--- stdout
+--- stderr
+SwiftDefaultApps ERROR -10811: /etc/hosts is not a valid application.
+--- exit=1

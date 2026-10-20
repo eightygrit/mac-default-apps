@@ -1,0 +1,5 @@
+$ swda setHandler --UTI public.html --app NoSuchAppAnywhere --role Vieewer
+--- stdout
+--- stderr
+SwiftDefaultApps ERROR: Vieewer is not a role. Use Viewer, Editor, Shell or All.
+--- exit=1

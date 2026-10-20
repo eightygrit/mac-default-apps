@@ -10,6 +10,7 @@
 # Prints the result and how many distinct compiler warnings and errors there were. They are also written, one
 # per line as "file:line:col: message" with the repository prefix removed, to <output-dir>/diagnostics.txt;
 # the full log is <output-dir>/build.log. ARCH overrides the architecture (default: this machine's).
+# FAIL_ON_WARNINGS=1 makes any warning end the script with status 1, as an error does (the build of record has none).
 # Compare two builds with: diff <old>/diagnostics.txt <new>/diagnostics.txt
 #
 # Launch Services registers freshly built applications, which changes what swda lists. When you compare
@@ -35,7 +36,12 @@ xcodebuild -project "$project" -target "$target" -configuration Release \
 rc=$?
 grep -E 'BUILD (SUCCEEDED|FAILED)' "$out/build.log" | tail -1
 grep -E '^/.*: (warning|error):' "$out/build.log" | sed -E "s#^$repo/##" | sort -u >"$out/diagnostics.txt"
-echo "exit=$rc  distinct warnings: $(grep -c ': warning:' "$out/diagnostics.txt")  errors: $(grep -c ': error:' "$out/diagnostics.txt")"
+warnings="$(grep -c ': warning:' "$out/diagnostics.txt")"
+echo "exit=$rc  distinct warnings: $warnings  errors: $(grep -c ': error:' "$out/diagnostics.txt")"
+if [ "$rc" = 0 ] && [ "$warnings" != 0 ] && [ "${FAIL_ON_WARNINGS:-0}" = 1 ]; then
+	cat "$out/diagnostics.txt" >&2
+	exit 1
+fi
 if [ "$rc" = 0 ] && [ "$kind" = dummy ]; then
 	# A main nib that the Info.plist names but the bundle lacks leaves the delegate uninstalled (it happened once, silently).
 	app="$out/products/Release/ThisAppDoesNothing.app"

@@ -1,0 +1,24 @@
+$ swda getHandler --extension
+--- stdout
+--- stderr
+Usage: swda getHandler <type> [options]
+
+<type>
+--URL <subtype>                         Return the default application for <subtype>
+--UTI <subtype>                         Return the default application for <subtype>
+--extension, --ext <extension>          Return the default application for files with <extension>
+--ftp                                   Returns the default FTP client.
+--internet, --browser, --web            Returns the default web browser.
+--mail, --email, --e-mail               Returns the default e-mail client.
+--news                                  Returns the default news client.
+--rss                                   Returns the default RSS client.
+
+[options]
+--all                                   When this flag is added, a list of all applications registered for that content will printed.
+--role <role>                           --role <Viewer|Editor|Shell|All>, specifies the role with which to register the handler. Default is All.
+-h, --help                              Show help information for this command
+
+Required values for options but given none:
+	--extension
+
+--- exit=1

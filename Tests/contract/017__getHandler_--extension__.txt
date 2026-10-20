@@ -1,0 +1,5 @@
+$ swda getHandler --extension 
+--- stdout
+--- stderr
+SwiftDefaultApps ERROR: Could not resolve  to a UTI.
+--- exit=1

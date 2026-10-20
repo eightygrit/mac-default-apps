@@ -5,8 +5,11 @@ and the ones that compile Swift call `swiftc` directly (a test target would mean
 
 | Script | What it checks | Can it change your default handlers? |
 |---|---|---|
-| [`golden.sh`](golden.sh) | the CLI's output, error text and exit status in 368 cases | no |
-| [`logic/run.sh`](logic/run.sh) | the shared sources: error codes and messages, which application an input means, refusals, helpers | no (reads Launch Services only) |
+| [`golden.sh`](golden.sh) | the CLI's output, error text and exit status in 368 cases, compared build against build | no |
+| [`contract.sh`](contract.sh) `<swda>` | the 25 of those cases that read the same on every Mac, compared with the recordings in [`contract/`](contract) | no |
+| [`logic/run.sh`](logic/run.sh) | the shared sources: error codes and messages, which application an input means, planted look-alikes, what each setter asks the system for, refusals, helpers | no (reads Launch Services only; a stand-in replaces the calls that write) |
+| [`mutations.sh`](mutations.sh) | that the logic tests notice 25 deliberate breaks of the shared sources (a role widened, a guard dropped, a look-alike ranked first) | no (works in a scratch copy) |
+| [`check-artifacts.sh`](check-artifacts.sh) `<program>...` | what the built programs link to: no deprecated or private Launch Services function, no networking | no |
 | [`probe/run.sh`](probe/run.sh) `<name>` | facts about macOS the design rests on, mostly old calls against new ones | no |
 | [`probe/fixups.sh`](probe/fixups.sh) | why private and legacy symbols are looked up with `dlsym` | no |
 | [`build-scratch.sh`](build-scratch.sh) | builds one target outside the repository and counts compiler warnings | no |
@@ -23,18 +26,26 @@ option). Lists whose order is not part of the contract are sorted.
 
 Compare a change with the build before it. Record **both** back to back, because Launch Services drifts: building or
 installing an application registers it, and registering `ThisAppDoesNothing.app` adds it as a handler for
-`public.item` and for the `*` scheme, which changes several cases.
+`public.item` and for the `*` scheme, which changes several cases. Build the reference in a worktree of its own, so that
+your checkout and its uncommitted work stay as they are (the reference needs `build-scratch.sh`, so it cannot be older
+than that script):
 
 ```bash
-git switch <reference commit>; Tests/build-scratch.sh cli /tmp/swda-ref
-git switch <candidate>;        Tests/build-scratch.sh cli /tmp/swda-new
+git worktree add --detach /tmp/swda-ref-src <reference commit>
+git -C /tmp/swda-ref-src submodule update --init
+/tmp/swda-ref-src/Tests/build-scratch.sh cli /tmp/swda-ref
+Tests/build-scratch.sh cli /tmp/swda-new
 Tests/golden.sh /tmp/swda-ref/products/Release/swda /tmp/golden-ref
 Tests/golden.sh /tmp/swda-new/products/Release/swda /tmp/golden-new
 diff -ru /tmp/golden-ref /tmp/golden-new
+git worktree remove --force /tmp/swda-ref-src
 ```
 
 Two runs of one build, back to back, must produce no differences at all. The recordings contain your installed
-applications, so they are never committed.
+applications, so they are never committed, with one exception: the 25 cases that name nothing installed here (help
+and usage text, refusals of a missing application or a malformed scheme or role) are the same on every Mac. They are
+kept in `contract/`, and `contract.sh <swda>` fails when the output of a build differs from them. A change of output
+made on purpose is recorded with `contract.sh <swda> --record`, in the same commit as the change.
 
 ## Logic tests
 
@@ -48,6 +59,21 @@ reads Launch Services. The checks of the setters ask for an application that doe
 exist (or, where a real type is needed so that the application is what gets refused, one nobody depends on), so the
 code under test has to refuse them; the comment above those checks says what could change were a refusal ever skipped.
 When behavior changes on purpose, change the expected value in the same commit as the code.
+
+`SWDA_READ_ONLY=1` makes every change of a default handler, and every registration of an application, fail as if macOS
+had not allowed it (`LSWrappers.isReadOnly`). `logic/run.sh`, `mutations.sh` and `golden.sh` set it, and `logic/run.sh`
+refuses to run if a check calls a setter without a stand-in of its own. This is not a precaution on paper: a mutation
+run once wrote three real entries (`public.data` for all roles, and two for types and an application that do not exist)
+because the older checks trusted a guard to refuse first. `LSSetDefaultRoleHandlerForContentType` records a UTI nobody
+declared and an application nobody installed without complaint, so "it names something that does not exist" protects
+nothing.
+
+Three things keep the checks of the writing code honest. The setters take the three calls that change a default
+(`LSWrappers.HandlerSetter`), so a check passes a stand-in that records what it is asked, and nothing it does can write a
+default. The checks of look-alikes plant application bundles in a temporary directory and rank them with the same
+function the program uses. And `mutations.sh` breaks the sources on purpose, one way at a time, in a scratch copy: every
+break has to make the logic tests fail, so a check that stops guarding anything shows up as a survivor. Add a row to its
+table when a new rule is worth protecting.
 
 ## Without the per-role functions
 
@@ -93,7 +119,14 @@ Tests/build-scratch.sh dummy /tmp/swda-dummy   # ThisAppDoesNothing.app
 ```
 
 It prints the result and the number of distinct compiler warnings, and keeps them in `diagnostics.txt` so two
-builds can be compared with `diff`. Unlike `build.sh` it does not sign, install or back anything up.
+builds can be compared with `diff`; `FAIL_ON_WARNINGS=1` turns any warning into a failure, as the CI does. Unlike
+`build.sh` it does not sign, install or back anything up.
+
+## CI
+
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs, on every push and pull request, the logic tests, the
+mutation check, the three scratch builds with warnings fatal, `check-artifacts.sh` on what they built, `contract.sh`
+and `legacy-roles-off.sh`. It never writes a default handler. Everything in it can be run locally with the commands above.
 
 ## Writes (guarded)
 

@@ -1,0 +1,26 @@
+$ swda setHandler --extension pdf
+--- stdout
+--- stderr
+Usage: swda setHandler <application> <type> [options]
+
+<application>
+--app, --application <application>      The <application> to register as default handler. Specifying "None" assigns Do Nothing, an application that ignores whatever it is asked to open.
+
+<type>
+--URL <subtype>                         Change the default application for <subtype>
+--UTI <subtype>                         Change the default application for <subtype>
+--extension, --ext <extension>          Change the default application for files with <extension>
+--ftp                                   Changes the default FTP client.
+--internet, --browser, --web            Changes the default web browser.
+--mail, --email, --e-mail               Changes the default e-mail client.
+--news                                  Changes the default news client.
+--rss                                   Changes the default RSS client.
+
+[options]
+--role <role>                           --role <Viewer|Editor|Shell|All>, specifies the role with which to register the handler. Default is All.
+-h, --help                              Show help information for this command
+
+Missing options:
+<application>:                          --app, --application
+
+--- exit=1

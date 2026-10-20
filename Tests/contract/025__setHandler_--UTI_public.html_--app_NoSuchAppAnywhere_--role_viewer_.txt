@@ -1,0 +1,5 @@
+$ swda setHandler --UTI public.html --app NoSuchAppAnywhere --role viewer
+--- stdout
+--- stderr
+SwiftDefaultApps ERROR -10811: NoSuchAppAnywhere is not a valid application.
+--- exit=1

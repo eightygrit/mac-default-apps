@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Golden-output recorder for the `swda` CLI. READ-ONLY: it cannot change a default handler.
 #
-# usage: Tests/golden.sh <path-to-swda> <output-dir>
+# usage: Tests/golden.sh <path-to-swda> <output-dir> [--contract-only]
+#
+# --contract-only runs just the cases whose output is the same on every Mac (help and usage text, refusals that name nothing
+# on this machine), which Tests/contract.sh compares with the recordings kept in Tests/contract.
 #
 # Runs only
 #   - every getX command, and
@@ -14,12 +17,19 @@
 # when an app is installed between runs):
 #   diff -ru <dirA> <dirB>
 #
-# The recordings are machine-specific, so they are never committed.
+# The full recordings are machine-specific, so they are never committed; the --contract-only subset is, in Tests/contract.
 set -u
-SWDA="${1:?path to swda}"; OUT="${2:?output dir}"
+# Only reads, and only refusals that happen before a write: with this set, a build that wrongly got as far as a write is refused.
+export SWDA_READ_ONLY=1
+SWDA="${1:?path to swda}"; OUT="${2:?output dir}"; CONTRACT_ONLY=0
+[ "${3:-}" = "--contract-only" ] && CONTRACT_ONLY=1
+[ -x "$SWDA" ] || { echo "golden.sh: $SWDA is not an executable" >&2; exit 2; }
 mkdir -p "$OUT"
 n=0
+group=contract                # contract: the same on every Mac; machine: depends on what is installed here
+skipped() { [ "$CONTRACT_ONLY" = 1 ] && [ "$group" != contract ]; }
 run() {                       # run <args...>  -> $OUT/NNN__<slug>.out (stdout, stderr, exit)
+  skipped && return 0
   n=$((n+1))
   local slug; slug="$(printf '%s_' "$@" | tr -c 'A-Za-z0-9._-\n' '_' | cut -c1-110)"
   local f; f="$OUT/$(printf '%03d' "$n")__${slug}.out"
@@ -28,6 +38,7 @@ run() {                       # run <args...>  -> $OUT/NNN__<slug>.out (stdout, 
   rm -f "$f.so" "$f.se" "$f.rc"
 }
 sorted() {                    # same as run, but stdout is sorted (list order is not part of the contract)
+  skipped && return 0
   n=$((n+1))
   local slug; slug="$(printf '%s_' "$@" | tr -c 'A-Za-z0-9._-\n' '_' | cut -c1-110)"
   local f; f="$OUT/$(printf '%03d' "$n")__sorted_${slug}.out"
@@ -36,13 +47,16 @@ sorted() {                    # same as run, but stdout is sorted (list order is
   rm -f "$f.so" "$f.se" "$f.rc"
 }
 
+group=machine                 # the version changes with every release
 run version
+group=contract
 run help
 run getHandler --help
 run setHandler --help
 run bogusCommand
 
 # whole-database listings (order-insensitive)
+group=machine
 sorted getApps
 sorted getSchemes
 sorted getUTIs
@@ -71,6 +85,7 @@ for flag in --internet --browser --web --mail --email --e-mail --ftp --rss --new
 done
 
 # option-parser contract
+group=contract
 run getHandler
 run getHandler --UTI public.html --URL http
 run getHandler --UTI
@@ -86,12 +101,14 @@ run setHandler --UTI public.html --app /etc/hosts
 run setHandler --URL "bad scheme" --app Safari
 run setHandler --URL "1bad" --app Safari
 # --extension / --ext (PR #94): known, bundle-type, unknown and malformed extensions
+group=machine
 EXTS=(pdf md html txt swift app action appex foobar zzzzqq PDF .pdf tar.gz)
 for e in "${EXTS[@]}"; do
   run getHandler --extension "$e"
   sorted getHandler --extension "$e" --all
   run getHandler --ext "$e" --role Viewer
 done
+group=contract
 run getHandler --extension ""
 run getHandler --extension
 run getHandler --extension pdf --UTI public.html

@@ -1,0 +1,14 @@
+$ swda bogusCommand
+--- stdout
+Available commands: 
+- getHandler                              Returns the default application registered for the URI Scheme or <subtype> you specify.
+- getApps                                 Returns a list of all registered applications.
+- getSchemes                              Returns a list of all known URI schemes, accompanied by their default handler.
+- getUTIs                                 Returns a list of all known UTIs, and their default handler.
+- setHandler                              Sets <application> as the default handler for a given <type>/<subtype> combination.
+- help                                    Prints this help information
+- version                                 Prints the current version of this app
+--- stderr
+Command "bogusCommand" not found
+
+--- exit=1

@@ -1,0 +1,5 @@
+$ swda setHandler --URL 1bad --app Safari
+--- stdout
+SwiftDefaultApps ERROR -30774: 1bad is not a valid URI Scheme.
+--- stderr
+--- exit=0

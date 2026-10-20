@@ -1,0 +1,5 @@
+$ swda setHandler --UTI public.html --app /nonexistent/Foo.app
+--- stdout
+--- stderr
+SwiftDefaultApps ERROR -10814: No application found for /nonexistent/Foo.app
+--- exit=1
