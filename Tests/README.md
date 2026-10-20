@@ -9,7 +9,8 @@ and the ones that compile Swift call `swiftc` directly (a test target would mean
 | [`contract.sh`](contract.sh) `<swda>` | the 25 of those cases that read the same on every Mac, compared with the recordings in [`contract/`](contract) | no |
 | [`logic/run.sh`](logic/run.sh) | the shared sources: error codes and messages, which application an input means, planted look-alikes, what each setter asks the system for, refusals, helpers | no (reads Launch Services only; a stand-in replaces the calls that write) |
 | [`model/run.sh`](model/run.sh) | the app's model, without a window: grouping and collapsing, the custom-scheme field, and the one place a default is changed (what is refused, shown while it waits, said when it did not take effect) | no (every change goes through a stand-in) |
-| [`mutations.sh`](mutations.sh) | that the logic and model tests notice 35 deliberate breaks (a role widened, a guard dropped, a look-alike ranked first, a collapsed group hiding another list) | no (works in a scratch copy) |
+| [`mutations.sh`](mutations.sh) | that the logic and model tests notice 40 deliberate breaks (a role widened, a guard dropped, a look-alike ranked first, a collapsed group hiding another list); `mutations.sh 37` runs one row | no (works in a scratch copy) |
+| [`perf/run.sh`](perf/run.sh) `[rounds]` | how long each list of the app takes to load (File Types: 3 s before the types were made on the main thread, 0.05 s after); numbers depend on the Mac | no |
 | [`check-artifacts.sh`](check-artifacts.sh) `<program>...` | what the built programs link to: no deprecated or private Launch Services function, no networking | no |
 | [`probe/run.sh`](probe/run.sh) `<name>` | facts about macOS the design rests on, mostly old calls against new ones | no |
 | [`probe/fixups.sh`](probe/fixups.sh) | why private and legacy symbols are looked up with `dlsym` | no |
@@ -84,8 +85,8 @@ VERBOSE=1 Tests/model/run.sh     # every check
 ```
 
 `model/main.swift` compiles the app's `AppModel` and `Catalog` with the shared sources, without the views or a window. The
-model takes the three things it asks of the system when it changes a default (`Catalog.HandlerAccess`: change it, wait until it
-took effect, read it again) as a parameter, so the checks pass a stand-in that answers as told and can hold a change open: that is
+model takes the four things it asks of the system (`Catalog.HandlerAccess`: change a default, wait until it took effect, read it
+again, read the defaults of all the types) as a parameter, so the checks pass a stand-in that answers as told and can hold a change open: that is
 how "a second change is refused while the first waits" and "a reading that began before a change is dropped" are checked. The
 views are not compiled; what they show is a function of the model, and what they do with a click is one call of it.
 

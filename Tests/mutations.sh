@@ -3,7 +3,8 @@
 # time, in a scratch copy, and every break must make the suite that guards it (Tests/logic or Tests/model) fail. A mutation the
 # tests survive means a check is missing.
 #
-# usage: Tests/mutations.sh      exit status 1 if any mutation survives, or if the unchanged sources do not pass
+# usage: Tests/mutations.sh [number...]      exit status 1 if any mutation survives, or if the unchanged sources do not pass
+#        (numbers, as printed, run only those rows)
 #
 # The repository is never touched. Add a row to the table when a new rule is worth protecting; a row says which suite, which file,
 # the exact text to replace (it must occur), what to put there, and what the break stands for.
@@ -30,7 +31,7 @@ if grep -nE 'Catalog\.setDefault\(|Catalog\.settledDefault\(' "$here/model/main.
 	exit 2
 fi
 
-exec python3 -I - "$repo" "$work" <<'PYTHON'
+exec python3 -I - "$repo" "$work" "$@" <<'PYTHON'
 import os, shutil, subprocess, sys
 
 repo, work = sys.argv[1], sys.argv[2]
@@ -110,6 +111,16 @@ MUTATIONS = [
      "a declined confirmation is reported as a failure"),
     ("model", "model/AppModel.swift", "defer { changing.remove(content) }", "",
      "a scheme or type stays waiting after its change ended"),
+    ("model", "model/AppModel.swift", "typeGrouping != .none, typeGrouping != .app || hasTypeHandlers else", "typeGrouping != .none else",
+     "grouping by default application before the defaults are read puts every type under none"),
+    ("model", "model/AppModel.swift", "didSet { if typeGrouping == .app { loadTypeHandlers() }; refresh() }", "didSet { refresh() }",
+     "the defaults of the types are never read when the user groups by them"),
+    ("model", "model/AppModel.swift", "guard !hasTypeHandlers, typeHandlersTask == nil, let types", "guard let types",
+     "the defaults of the types are read again each time they are grouped"),
+    ("model", "model/AppModel.swift", "typeHandlers = handlers.merging(typeHandlers) { _, changed in changed }", "typeHandlers = handlers",
+     "a default changed while the defaults are read is replaced by the older reading"),
+    ("model", "model/AppModel.swift", "			hasTypeHandlers = false\n			typeHandlers = [:]", "",
+     "a list loaded again keeps the defaults of the list before it"),
     ("model", "model/Catalog.swift", "return listed.first { path($0).map { same($0, resolved) } ?? false } ?? listed[0]", "return listed[0]",
      "the Applications tab shows the first copy listed, not the one that is resolved"),
     ("model", "model/Catalog.swift", "choice.url?.path ?? choice.bundleID", "choice.bundleID",
@@ -125,7 +136,10 @@ def build_and_run(directory, suite):
                               capture_output=True, text=True)
     if compiled.returncode != 0:
         return "did not compile"
-    ran = subprocess.run([binary], capture_output=True, text=True)
+    try:
+        ran = subprocess.run([binary], capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        return "failed"   # a break that makes the tests hang is noticed too
     return "failed" if ran.returncode != 0 else "passed"
 
 def fresh(directory, suite):
@@ -144,8 +158,11 @@ for suite in SUITES:
         print(f"The unchanged sources {state} in the {suite} tests; run Tests/{suite}/run.sh first.")
         sys.exit(1)
 
+only = {int(argument) for argument in sys.argv[3:]}
 survivors = 0
 for number, (suite, name, old, new, meaning) in enumerate(MUTATIONS, 1):
+    if only and number not in only:
+        continue
     directory = os.path.join(work, f"m{number}")
     fresh(directory, suite)
     path = os.path.join(directory, name)
@@ -163,6 +180,7 @@ for number, (suite, name, old, new, meaning) in enumerate(MUTATIONS, 1):
         print(f"SURVIVED  {number:2}  [{suite}] {meaning} ({state})")
     shutil.rmtree(directory, ignore_errors=True)
 
-print(f"{len(MUTATIONS) - survivors} of {len(MUTATIONS)} mutations caught" + ("" if survivors == 0 else f", {survivors} NOT"))
+ran = len(only) if only else len(MUTATIONS)
+print(f"{ran - survivors} of {ran} mutations caught" + ("" if survivors == 0 else f", {survivors} NOT"))
 sys.exit(1 if survivors else 0)
 PYTHON

@@ -103,14 +103,50 @@ struct HandlerState {
 	func isCurrent(_ bundleID: String) -> Bool { current?.caseInsensitiveCompare(bundleID) == .orderedSame }
 }
 
-/** Builds the sidebar lists from Launch Services, and changes defaults. The reads are synchronous and meant to run off the main thread; `setDefault` is `async`. */
+/**
+One scheme or UTI an application declares. What currently opens it is the model's to say (`AppModel.handlerState`).
+*/
+struct Claim: Identifiable, Sendable {
+	let content: Content
+	let title: String
+	let subtitle: String
+
+	var id: String { (content.isScheme ? "scheme:" : "type:") + content.id }
+}
+
+/**
+Remembers the applications looked up during one pass over a list. The same few applications turn up in every row (26 applications for
+1,045 rows of one application's claims), and each lookup asks Launch Services and the file system. It lives as long as the pass:
+an application installed or removed afterwards is found by the next one.
+*/
+final class AppRefMemo: @unchecked Sendable {
+	private let lock = NSLock()
+	private var found: [String: AppRef?] = [:]
+
+	func appRef(bundleID: String) -> AppRef? {
+		let key = bundleID.lowercased()
+		lock.lock()
+		if let known = found[key] { lock.unlock(); return known }
+		lock.unlock()
+		let made = AppRef(bundleID: bundleID)
+		lock.lock(); found[key] = .some(made); lock.unlock()
+		return made
+	}
+}
+
+/**
+Builds the sidebar lists from Launch Services, and changes defaults. The reads are synchronous and meant to run off the main thread,
+except those that use `UTType`: the first time one is used off the main thread it costs about a millisecond, and a few microseconds on
+it, which makes the 2,685 types the system knows 3 s there and 85 ms here. Those are marked, and are called from the main thread.
+`setDefault` is `async`.
+*/
 enum Catalog {
 	private static let internetSchemes: [(String, String)] = [
 		("http", "Web Browser"), ("mailto", "E-Mail"), ("news", "News"),
 		("rss", "RSS"), ("ftp", "FTP"), ("im", "Instant Messaging"),
 	]
 
-	/** The entries of a category, or nil when this version of macOS does not provide the list. */
+	/** The entries of a category, or nil when this version of macOS does not provide the list. File Types: call it on the main thread. */
 	static func load(_ category: Category) -> [Entry]? {
 		switch category {
 		case .internet:
@@ -121,14 +157,7 @@ enum Catalog {
 				Entry(id: scheme, kind: .scheme, title: scheme, subtitle: LSWrappers.Schemes.copyNameForScheme(scheme) ?? "")
 			}.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
 		case .types:
-			guard let identifiers = LSPrivate.copyDeclaredTypeIdentifiers() else { return nil }
-			return concurrentMap(identifiers) { identifier -> Entry? in
-				guard let type = UTType(identifier), type.conforms(to: .item) || type.conforms(to: .content) else { return nil }
-				let extensions = (type.tags[.filenameExtension] ?? []).map { $0.lowercased() }
-				let description = type.localizedDescription ?? identifier
-				let subtitle = extensions.isEmpty ? identifier : "\(identifier) · " + extensions.map { ".\($0)" }.joined(separator: " ")
-				return Entry(id: identifier, kind: .type, title: description, subtitle: subtitle, extensions: extensions, kindGroup: kindGroup(of: type))
-			}.compactMap { $0 }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+			return declaredTypes().map(entries(for:))
 		case .apps:
 			guard let paths = LSWrappers.copyAllApps() else { return nil }
 			let apps = concurrentMap(paths) { path -> Entry? in
@@ -147,6 +176,31 @@ enum Catalog {
 			}.compactMap { $0 }
 			return preferredCopies(of: apps).sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
 		}
+	}
+
+	/** A type as an application declares it: the identifier it wrote, which the lists show and the defaults are keyed by, and what the system makes of it. */
+	struct DeclaredType: Sendable {
+		let identifier: String
+		let type: UTType
+	}
+
+	/** The types any application declares, that the system knows. Call it on the main thread. */
+	static func declaredTypes() -> [DeclaredType]? {
+		LSPrivate.copyDeclaredTypeIdentifiers().map { identifiers in
+			identifiers.compactMap { identifier in UTType(identifier).map { DeclaredType(identifier: identifier, type: $0) } }
+		}
+	}
+
+	/** The File Types entries for the types that are files or content, sorted by description. Call it on the main thread. */
+	static func entries(for declared: [DeclaredType]) -> [Entry] {
+		declared.compactMap { item -> Entry? in
+			let type = item.type, identifier = item.identifier
+			guard type.conforms(to: .item) || type.conforms(to: .content) else { return nil }
+			let extensions = (type.tags[.filenameExtension] ?? []).map { $0.lowercased() }
+			let description = type.localizedDescription ?? identifier
+			let subtitle = extensions.isEmpty ? identifier : "\(identifier) · " + extensions.map { ".\($0)" }.joined(separator: " ")
+			return Entry(id: identifier, kind: .type, title: description, subtitle: subtitle, extensions: extensions, kindGroup: kindGroup(of: type))
+		}.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
 	}
 
 	/**
@@ -172,7 +226,7 @@ enum Catalog {
 	}
 
 	/** Candidate handlers and the current default for a scheme or UTI in a given role. */
-	static func handlers(for content: Content, role: Role = .all) -> HandlerState {
+	static func handlers(for content: Content, role: Role = .all, memo: AppRefMemo = AppRefMemo()) -> HandlerState {
 		let ids: [String]
 		let current: String?
 		if content.isScheme {
@@ -185,7 +239,7 @@ enum Catalog {
 		var seen = Set<String>()
 		let candidates = (ids + [current].compactMap { $0 })
 			.filter { seen.insert($0.lowercased()).inserted }
-			.compactMap(AppRef.init(bundleID:))
+			.compactMap(memo.appRef(bundleID:))
 			.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
 		return HandlerState(candidates: candidates, current: current)
 	}
@@ -196,8 +250,37 @@ enum Catalog {
 
 	/** Default handler of each UTI, keyed by UTI; UTIs without one are omitted. */
 	static func defaultHandlers(forTypes identifiers: [String]) -> [String: String] {
-		let pairs = concurrentMap(identifiers) { id in defaultHandler(forType: id).map { (id, $0) } }
-		return Dictionary(pairs.compactMap { $0 }, uniquingKeysWith: { a, _ in a })
+		Dictionary(identifiers.compactMap { id in defaultHandler(forType: id).map { (id, $0) } }, uniquingKeysWith: { a, _ in a })
+	}
+
+	/** The applications that are the given bundle identifiers, keyed by the identifier in lowercase. */
+	static func appRefs(for bundleIDs: some Sequence<String>) -> [String: AppRef] {
+		let memo = AppRefMemo()
+		return Dictionary(bundleIDs.compactMap { id in memo.appRef(bundleID: id).map { (id.lowercased(), $0) } }, uniquingKeysWith: { a, _ in a })
+	}
+
+	/**
+	The File Types rows of the identifiers an application declares, sorted by description. A type the system does not know cannot be
+	made anyone's default, so it is not offered. Call it on the main thread.
+	*/
+	static func typeClaims(for identifiers: [String]) -> [Claim] {
+		identifiers.compactMap { identifier -> Claim? in
+			guard let type = UTType(identifier) else { return nil }
+			let extensions = (type.tags[.filenameExtension] ?? []).map { ".\($0)" }.joined(separator: " ")
+			return Claim(content: Content(isScheme: false, id: identifier), title: type.localizedDescription ?? identifier,
+						 subtitle: extensions.isEmpty ? identifier : "\(identifier) · \(extensions)")
+		}.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+	}
+
+	/** What an application declares it can open, as rows with the current handlers: its schemes, then the `typeClaims` it was given. */
+	static func claims(schemes: [String], types: [Claim]) -> (claims: [Claim], handlers: [Content: [Role: HandlerState]]) {
+		let memo = AppRefMemo()
+		var handlers: [Content: [Role: HandlerState]] = [:]
+		let schemeClaims = schemes.map { scheme in
+			Claim(content: Content(isScheme: true, id: scheme), title: "\(scheme):", subtitle: LSWrappers.Schemes.copyNameForScheme(scheme) ?? "")
+		}
+		for claim in schemeClaims + types { handlers[claim.content] = [.all: self.handlers(for: claim.content, memo: memo)] }
+		return (schemeClaims + types, handlers)
 	}
 
 	/** Broad kinds, most specific first: a UTI lands in the first kind it conforms to. */
@@ -287,7 +370,7 @@ enum Catalog {
 	}
 
 	/**
-	What the model asks of the system to change a default and to see the result. The system's own is the only one the app uses;
+	What the model asks of the system to change a default and to see the result, and to read the defaults of the types. The system's own is the only one the app uses;
 	a test passes one of its own, so that the model's rules (what is refused, what is shown while a change waits, what is said
 	when it did not take effect) can be checked without writing a default.
 	*/
@@ -298,6 +381,8 @@ enum Catalog {
 		var settle: @Sendable (Content, Role, _ target: String) async -> Bool
 		/// Reads the candidates and the current default of a scheme or UTI in each of the roles.
 		var read: @Sendable (Content, [Role]) async -> [Role: HandlerState]
+		/// Reads the default of each of the given types, keyed by type, and the applications they name, keyed by lowercased bundle identifier.
+		var readAll: @Sendable ([String]) async -> (defaults: [String: String], apps: [String: AppRef])
 
 		static var system: HandlerAccess {
 			HandlerAccess(
@@ -306,6 +391,12 @@ enum Catalog {
 				read: { content, roles in
 					await Task.detached(priority: .userInitiated) {
 						Dictionary(roles.map { ($0, Catalog.handlers(for: content, role: $0)) }, uniquingKeysWith: { first, _ in first })
+					}.value
+				},
+				readAll: { identifiers in
+					await Task.detached(priority: .userInitiated) {
+						let defaults = Catalog.defaultHandlers(forTypes: identifiers)
+						return (defaults: defaults, apps: Catalog.appRefs(for: Set(defaults.values.map { $0.lowercased() })))
 					}.value
 				})
 		}

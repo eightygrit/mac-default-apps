@@ -132,15 +132,6 @@ private struct HandlerPicker: View {
 
 // MARK: - Application
 
-/** One scheme or UTI an application declares. What currently opens it is the model's to say (`AppModel.handlerState`). */
-private struct Claim: Identifiable {
-	let content: Content
-	let title: String
-	let subtitle: String
-
-	var id: String { (content.isScheme ? "scheme:" : "type:") + content.id }
-}
-
 /** Everything an application declares, with one-click "Make Default". */
 @MainActor
 private struct AppDetail: View {
@@ -176,8 +167,8 @@ private struct AppDetail: View {
 		}
 		.formStyle(.grouped)
 		.task {
-			let bundleID = entry.id, declarations = declarations
-			let loaded = await Task.detached(priority: .userInitiated) { Self.loadClaims(bundleID, declarations) }.value
+			let schemes = declarations.schemes, types = Catalog.typeClaims(for: declarations.types)
+			let loaded = await Task.detached(priority: .userInitiated) { Catalog.claims(schemes: schemes, types: types) }.value
 			model.store(loaded.handlers)
 			claims = loaded.claims
 		}
@@ -199,24 +190,6 @@ private struct AppDetail: View {
 				}
 			}
 		}
-	}
-
-	private nonisolated static func loadClaims(_ bundleID: String, _ declarations: AppDeclarations) -> (claims: [Claim], handlers: [Content: [Role: HandlerState]]) {
-		// A type the system does not know cannot be made anyone's default (the change is refused as an unknown UTI), so it is not offered.
-		let known = declarations.types.filter { !$0.isEmpty && UTType($0) != nil }
-		let schemes = Catalog.concurrentMap(declarations.schemes) { scheme -> (Claim, HandlerState) in
-			let content = Content(isScheme: true, id: scheme)
-			return (Claim(content: content, title: "\(scheme):", subtitle: LSWrappers.Schemes.copyNameForScheme(scheme) ?? ""), Catalog.handlers(for: content))
-		}
-		let types = Catalog.concurrentMap(known) { identifier -> (Claim, HandlerState) in
-			let type = UTType(identifier)
-			let extensions = (type?.tags[.filenameExtension] ?? []).map { ".\($0)" }.joined(separator: " ")
-			let content = Content(isScheme: false, id: identifier)
-			return (Claim(content: content, title: type?.localizedDescription ?? identifier,
-						  subtitle: extensions.isEmpty ? identifier : "\(identifier) · \(extensions)"), Catalog.handlers(for: content))
-		}.sorted { $0.0.title.localizedStandardCompare($1.0.title) == .orderedAscending }
-		let all = schemes + types
-		return (all.map(\.0), Dictionary(all.map { ($0.0.content, [Role.all: $0.1]) }, uniquingKeysWith: { first, _ in first }))
 	}
 }
 

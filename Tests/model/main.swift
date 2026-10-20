@@ -16,6 +16,11 @@ final class Spy: @unchecked Sendable {
     var current: [String?] = []
     var heldSet: Gate?
     var heldRead: Gate?
+    /// What `readAll` answers, the applications it names, and the gate that holds it; `readAlls` records what it was asked.
+    var typeDefaults: [String: String] = [:]
+    var typeApps: [String: AppRef] = [:]
+    var heldReadAll: Gate?
+    var readAlls: [[String]] = []
     private var readCount = 0
 
     func access() -> Catalog.HandlerAccess {
@@ -37,6 +42,11 @@ final class Spy: @unchecked Sendable {
                 if index == 0, let gate = heldRead { await gate.wait() }
                 let value = current.isEmpty ? nil : current[min(index, current.count - 1)]
                 return Dictionary(roles.map { ($0, HandlerState(candidates: [], current: value)) }, uniquingKeysWith: { a, _ in a })
+            },
+            readAll: { [self] identifiers in
+                readAlls.append(identifiers)
+                if let gate = heldReadAll { await gate.wait() }
+                return (defaults: typeDefaults, apps: typeApps)
             })
     }
 }
@@ -51,6 +61,17 @@ actor Gate {
     func open() { isOpen = true; continuation?.resume(); continuation = nil }
 }
 
+/// Lets the model run until `condition` holds, for at most five seconds, and says so as a failed check when it does not: a
+/// model that breaks a rule on purpose (Tests/mutations.sh) must fail the run, not hang it.
+@MainActor
+func waitUntil(_ name: String, _ condition: () -> Bool) async {
+    let deadline = Date().addingTimeInterval(5)
+    while !condition() {
+        if Date() > deadline { check("waited for: \(name)", false, true); return }
+        try? await Task.sleep(nanoseconds: 1_000_000)
+    }
+}
+
 func entry(_ id: String, kind: Entry.Kind = .type, group: String? = nil) -> Entry {
     Entry(id: id, kind: kind, title: id, subtitle: id, extensions: [], kindGroup: group)
 }
@@ -62,12 +83,16 @@ let html = Content(isScheme: false, id: "public.html")
 // MARK: - Grouping and collapsing
 
 section("collapsing")
-let grouped = AppModel(access: Spy().access())
+let groupedSpy = Spy()
+groupedSpy.typeDefaults = ["public.a": textEdit]
+groupedSpy.typeApps = [textEdit.lowercased(): AppRef(bundleID: textEdit)!]
+let grouped = AppModel(access: groupedSpy.access())
 let types = [entry("public.a"), entry("public.b"), entry("public.c")]
-grouped.finishLoad(.types, types, handlers: ["public.a": textEdit], apps: [textEdit.lowercased(): AppRef(bundleID: textEdit)!])
-grouped.finishLoad(.internet, [entry("http", kind: .scheme), entry("mailto", kind: .scheme)], handlers: [:], apps: [:])
+grouped.finishLoad(.types, types)
+grouped.finishLoad(.internet, [entry("http", kind: .scheme), entry("mailto", kind: .scheme)])
 grouped.category = .types
 grouped.typeGrouping = .app
+await grouped.waitForTypeHandlers()
 check("grouped by default app: two groups", grouped.sections.map(\.title), ["TextEdit", "No Default Application"].map { Optional($0) })
 grouped.toggle("")
 check("the group without a default is collapsed", grouped.visibleEntries.map(\.id), ["public.a"])
@@ -85,22 +110,63 @@ grouped.toggle("", all: true)
 check("... and on an expanded one collapses every group", grouped.visibleEntries.map(\.id), [])
 
 section("group titles")
-let titled = AppModel(access: Spy().access())
-titled.finishLoad(.types, [entry("public.a"), entry("public.b"), entry("public.c")], handlers: [
-    "public.a": DoNothingApp.bundleID, "public.b": "Org.Example.Not-Installed", "public.c": "org.example.not-installed",
-], apps: [:])
+let titledSpy = Spy()
+titledSpy.typeDefaults = ["public.a": DoNothingApp.bundleID, "public.b": "Org.Example.Not-Installed", "public.c": "org.example.not-installed"]
+let titled = AppModel(access: titledSpy.access())
+titled.finishLoad(.types, [entry("public.a"), entry("public.b"), entry("public.c")])
 titled.category = .types
 titled.typeGrouping = .app
+await titled.waitForTypeHandlers()
 check("Do Nothing is titled by its name, not its identifier", titled.sections.contains { $0.title == DoNothingApp.displayName }, true)
 check("an application that is not installed keeps the spelling the system gave", titled.sections.map(\.title).contains("Org.Example.Not-Installed"), true)
 check("... and spellings of one identifier are one group", titled.sections.count, 2)
 check("no title is a lowercased identifier", titled.sections.compactMap(\.title).contains(DoNothingApp.bundleID.lowercased()), false)
 
+section("reading the defaults of the types")
+let lazySpy = Spy()
+lazySpy.typeDefaults = ["public.a": textEdit]
+lazySpy.typeApps = [textEdit.lowercased(): AppRef(bundleID: textEdit)!]
+let lazy = AppModel(access: lazySpy.access())
+lazy.finishLoad(.types, types)
+lazy.category = .types
+check("the list is shown without reading them", lazySpy.readAlls.count, 0)
+lazy.typeGrouping = .app
+check("until they are read, grouping by them leaves the list whole", lazy.sections.map(\.title), [nil])
+await lazy.waitForTypeHandlers()
+check("grouping by default application reads them, once, for every type", lazySpy.readAlls, [["public.a", "public.b", "public.c"]])
+check("... and then groups", lazy.sections.map(\.title), ["TextEdit", "No Default Application"].map { Optional($0) })
+lazy.typeGrouping = .none
+lazy.typeGrouping = .app
+await lazy.waitForTypeHandlers()
+check("grouping again does not read them again", lazySpy.readAlls.count, 1)
+lazy.defaultChanged(forType: "public.b", to: textEdit)
+check("a default changed later moves the type to its group", lazy.sections.map { $0.entries.map(\.id) }, [["public.a", "public.b"], ["public.c"]])
+lazy.finishLoad(.types, types)
+check("loading the list again forgets them", lazy.sections.map(\.title), [nil])
+await lazy.waitForTypeHandlers()
+check("... and grouping reads them again", lazySpy.readAlls.count, 2)
+
+let raceSpy = Spy()
+raceSpy.typeDefaults = ["public.c": "com.apple.Safari"]
+raceSpy.typeApps = [textEdit.lowercased(): AppRef(bundleID: textEdit)!]
+let readAllGate = Gate()
+raceSpy.heldReadAll = readAllGate
+let raced = AppModel(access: raceSpy.access())
+raced.finishLoad(.types, types)
+raced.category = .types
+raced.typeGrouping = .app
+await waitUntil("the defaults of the types are asked for") { !raceSpy.readAlls.isEmpty }
+raced.defaultChanged(forType: "public.c", to: textEdit)
+await readAllGate.open()
+await raced.waitForTypeHandlers()
+check("a default changed while they are read is not replaced by the older reading", raced.sections.map { $0.entries.map(\.id) }, [["public.c"], ["public.a", "public.b"]])
+check("... and its group is the new one's", raced.sections.map(\.title), ["TextEdit", "No Default Application"].map { Optional($0) })
+
 // MARK: - Search
 
 section("selection after a search")
 let searching = AppModel(access: Spy().access())
-searching.finishLoad(.internet, [entry("http", kind: .scheme), entry("mailto", kind: .scheme)], handlers: [:], apps: [:])
+searching.finishLoad(.internet, [entry("http", kind: .scheme), entry("mailto", kind: .scheme)])
 searching.query = "mail"
 check("a query filters the list", searching.visibleEntries.map(\.id), ["mailto"])
 searching.query = ""
@@ -111,7 +177,7 @@ check("an empty query shows everything again", searching.visibleEntries.map(\.id
 section("addScheme")
 let spy = Spy()
 let schemes = AppModel(access: spy.access())
-schemes.finishLoad(.schemes, [entry("http", kind: .scheme), entry("mailto", kind: .scheme)], handlers: [:], apps: [:])
+schemes.finishLoad(.schemes, [entry("http", kind: .scheme), entry("mailto", kind: .scheme)])
 schemes.category = .schemes
 schemes.query = "zzz"
 await schemes.addScheme(" MAILTO ")
@@ -194,7 +260,7 @@ let gate = Gate()
 slow.heldSet = gate
 let s = fresh(slow)
 let first = Task { await s.change(html, to: .init(bundleID: textEdit)) }
-while !s.isChanging(html) { await Task.yield() }
+await waitUntil("the change to begin") { s.isChanging(html) }
 check("while a change waits the scheme or type is shown as changing", s.isChanging(html), true)
 check("... and another one is not", s.isChanging(mailto), false)
 check("a second change of it is refused", await s.change(html, to: .init(bundleID: "org.other")), .ignored)
@@ -211,7 +277,7 @@ let readGate = Gate()
 race.heldRead = readGate
 let rm = fresh(race)
 let early = Task { await rm.refresh(html, roles: [.all]) }
-while race.reads.isEmpty { await Task.yield() }
+await waitUntil("the first reading to begin") { !race.reads.isEmpty }
 check("the change ends while the first reading is out", await rm.change(html, to: .init(bundleID: textEdit)), .applied)
 await readGate.open()
 await early.value

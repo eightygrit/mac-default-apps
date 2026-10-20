@@ -48,7 +48,7 @@ final class AppModel: ObservableObject {
 		didSet { refresh() }
 	}
 	@Published var typeGrouping: TypeGrouping = .none {
-		didSet { refresh() }
+		didSet { if typeGrouping == .app { loadTypeHandlers() }; refresh() }
 	}
 	/** What the alert says could not be done, and `errorMessage` why. It goes back to `defaultErrorTitle` when the alert is dismissed. */
 	@Published var errorTitle = AppModel.defaultErrorTitle
@@ -69,8 +69,10 @@ final class AppModel: ObservableObject {
 
 	private var entries: [Category: [Entry]] = [:]
 	private var loading: Set<Category> = []
-	/** Default handler of every UTI, for grouping File Types by application. */
+	/** Default handler of every UTI, for grouping File Types by application. Read only when the user groups by it. */
 	private var typeHandlers: [String: String] = [:]
+	private var hasTypeHandlers = false
+	private var typeHandlersTask: Task<Void, Never>?
 	private var apps: [String: AppRef] = [:]
 	private var collapsed: Set<String> = []
 	/** How often the handlers of each scheme and type were changed, so that a reading that began before a change is not kept. */
@@ -109,7 +111,8 @@ final class AppModel: ObservableObject {
 	}
 
 	private func group(_ entries: [Entry]) -> [EntrySection] {
-		guard category == .types, typeGrouping != .none else {
+		// Until the defaults are read, grouping by them would put every type under "No Default Application".
+		guard category == .types, typeGrouping != .none, typeGrouping != .app || hasTypeHandlers else {
 			return [EntrySection(id: "", title: nil, iconPath: nil, entries: entries)]
 		}
 		switch typeGrouping {
@@ -144,7 +147,7 @@ final class AppModel: ObservableObject {
 		guard entries[.types] != nil, typeHandlers[identifier]?.lowercased() != bundleID?.lowercased() else { return }
 		typeHandlers[identifier] = bundleID
 		if let bundleID, apps[bundleID.lowercased()] == nil { apps[bundleID.lowercased()] = AppRef(bundleID: bundleID) }
-		if category == .types && typeGrouping == .app { refresh() }
+		if hasTypeHandlers && category == .types && typeGrouping == .app { refresh() }
 	}
 
 	/** A list that is not grouped has no header to click, so it is never collapsed, whatever was collapsed in a grouped one. */
@@ -168,20 +171,20 @@ final class AppModel: ObservableObject {
 	func load(_ category: Category, force: Bool = false) {
 		guard force || (entries[category] == nil && !loading.contains(category)) else { return }
 		loading.insert(category)
+		// File Types go through `UTType`, which takes 85 ms here and 3 s on a worker thread.
+		guard category != .types else { finishLoad(category, Catalog.load(category)); return }
 		Task.detached(priority: .userInitiated) {
-			let result = Catalog.load(category)
-			let handlers = category == .types ? Catalog.defaultHandlers(forTypes: (result ?? []).map(\.id)) : [:]
-			let apps = Dictionary(Set(handlers.values.map { $0.lowercased() }).compactMap { id in AppRef(bundleID: id).map { (id, $0) } },
-								  uniquingKeysWith: { a, _ in a })
-			await self.finishLoad(category, result, handlers: handlers, apps: apps)
+			await self.finishLoad(category, Catalog.load(category))
 		}
 	}
 
 	/** Takes in a finished list. Internal so that a test can supply one. */
-	func finishLoad(_ category: Category, _ result: [Entry]?, handlers: [String: String], apps: [String: AppRef]) {
+	func finishLoad(_ category: Category, _ result: [Entry]?) {
 		if category == .types {
-			typeHandlers = handlers
-			self.apps = apps
+			typeHandlersTask?.cancel()
+			typeHandlersTask = nil
+			hasTypeHandlers = false
+			typeHandlers = [:]
 		}
 		entries[category] = result ?? []
 		loading.remove(category)
@@ -189,7 +192,33 @@ final class AppModel: ObservableObject {
 			errorTitle = "Couldn't Load \(category.rawValue)"
 			errorMessage = "The list of \(category.rawValue) is not available on this version of macOS."
 		}
+		if category == .types, typeGrouping == .app { loadTypeHandlers() }
 		if category == self.category { refresh() }
+	}
+
+	/** Reads the default of every type, which only grouping by default application needs. */
+	private func loadTypeHandlers() {
+		guard !hasTypeHandlers, typeHandlersTask == nil, let types = entries[.types] else { return }
+		let identifiers = types.map(\.id)
+		typeHandlersTask = Task {
+			let read = await access.readAll(identifiers)
+			guard !Task.isCancelled else { return }
+			finishLoadingTypeHandlers(read.defaults, apps: read.apps)
+		}
+	}
+
+	/** Returns when the defaults of the types have been read, if they are being read. For a test. */
+	func waitForTypeHandlers() async {
+		await typeHandlersTask?.value
+	}
+
+	/** Takes in the defaults of the types. A default changed meanwhile is newer than the reading. */
+	private func finishLoadingTypeHandlers(_ handlers: [String: String], apps: [String: AppRef]) {
+		typeHandlers = handlers.merging(typeHandlers) { _, changed in changed }
+		self.apps.merge(apps) { _, new in new }
+		hasTypeHandlers = true
+		typeHandlersTask = nil
+		if category == .types && typeGrouping == .app { refresh() }
 	}
 
 	/** Moves the selection within the visible list; used by arrow keys in the search field. */
