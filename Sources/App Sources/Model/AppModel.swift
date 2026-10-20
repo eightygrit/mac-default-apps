@@ -184,7 +184,7 @@ final class AppModel: ObservableObject {
 		let scheme = scheme.trimmingCharacters(in: .whitespaces)
 		guard !scheme.isEmpty else { return }
 		Task {
-			let result = await Catalog.setDefault(DoNothingApp.bundleID, for: scheme, isScheme: true)
+			let result = await Catalog.setDefault(.init(bundleID: DoNothingApp.bundleID), for: scheme, isScheme: true)
 			guard report(result, app: DoNothingApp.bundleID, content: scheme) else { return }
 			selections[.schemes] = scheme
 			load(.schemes, force: true)

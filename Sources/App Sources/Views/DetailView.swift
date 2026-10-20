@@ -92,11 +92,11 @@ private struct ContentDetail: View {
 		}
 	}
 
-	private func choose(_ bundleID: String, role: Role) {
+	private func choose(_ choice: Catalog.HandlerChoice, role: Role) {
 		pending.insert(role)
-		let content = entry.id, isScheme = isScheme
+		let content = entry.id, isScheme = isScheme, bundleID = choice.bundleID
 		Task {
-			let result = await Catalog.setDefault(bundleID, for: content, isScheme: isScheme, role: role)
+			let result = await Catalog.setDefault(choice, for: content, isScheme: isScheme, role: role)
 			let succeeded = model.report(result, app: bundleID, content: content)
 			var prompted = false
 			if succeeded {
@@ -119,7 +119,7 @@ private struct ContentDetail: View {
 private struct HandlerPicker: View {
 	let label: String
 	let state: HandlerState
-	let onChoose: (String) -> Void
+	let onChoose: (Catalog.HandlerChoice) -> Void
 
 	private static let otherTag = "\u{0}other"
 
@@ -153,9 +153,9 @@ private struct HandlerPicker: View {
 			panel.prompt = "Choose"
 			guard panel.runModal() == .OK, let url = panel.url else { return }
 			guard let bundleID = Bundle(url: url)?.bundleIdentifier else { return }
-			onChoose(bundleID)
+			onChoose(.init(bundleID: bundleID, url: url))
 		} else {
-			onChoose(tag)
+			onChoose(.init(bundleID: tag))
 		}
 	}
 }
@@ -227,11 +227,11 @@ private struct AppDetail: View {
 		}
 	}
 
-	private func choose(_ bundleID: String, for claim: Claim) {
+	private func choose(_ choice: Catalog.HandlerChoice, for claim: Claim) {
 		pending.insert(claim.key)
-		let appID = entry.id
+		let appID = entry.id, bundleID = choice.bundleID
 		Task {
-			let result = await Catalog.setDefault(bundleID, for: claim.id, isScheme: claim.isScheme)
+			let result = await Catalog.setDefault(choice, for: claim.id, isScheme: claim.isScheme)
 			let succeeded = model.report(result, app: bundleID, content: claim.id)
 			var prompted = false
 			if succeeded {
@@ -281,7 +281,7 @@ private struct ClaimRow: View {
 	let claim: Claim
 	let appID: String
 	let isPending: Bool
-	let onChoose: (String) -> Void
+	let onChoose: (Catalog.HandlerChoice) -> Void
 
 	private var currentName: String? {
 		guard let current = claim.handlers.current else { return nil }
@@ -317,7 +317,7 @@ private struct ClaimRow: View {
 					.fixedSize()
 					.help("Choose another application")
 			} else {
-				Button("Make Default") { onChoose(appID) }
+				Button("Make Default") { onChoose(.init(bundleID: appID)) }
 					.controlSize(.small)
 			}
 		}

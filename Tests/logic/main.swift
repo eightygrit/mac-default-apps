@@ -132,20 +132,87 @@ if DoNothingApp.copyURL() != nil {
 } else {
     check("resolve [None] without a copy of Do Nothing", resolve("None").status, E.appNotFound.rawValue)
 }
-check("resolve [com.apple.textedit] keeps the spelling it was given", resolve("com.apple.textedit").bundleID, "com.apple.textedit")
+check("resolve [com.apple.textedit] answers with the identifier the application declares", resolve("com.apple.textedit").bundleID, "com.apple.TextEdit")
 check("Do Nothing is selected by None", DoNothingApp.isNamed("None"), true)
 check("Do Nothing is selected by its bundle identifier", DoNothingApp.isNamed(DoNothingApp.bundleID), true)
 check("Do Nothing is not selected by another spelling", DoNothingApp.isNamed("none"), false)
 check("Do Nothing is not selected by nothing", DoNothingApp.isNamed(nil), false)
 
 section("finding applications by name")
-check("a name finds the application", LSWrappers.copyAppPath(named: "TextEdit")?.hasSuffix("/TextEdit.app"), true)
-check("the name is case-insensitive and .app is optional", LSWrappers.copyAppPath(named: "textedit.APP"), LSWrappers.copyAppPath(named: "TextEdit"))
-check("a path is returned unchanged", LSWrappers.copyAppPath(named: "/some/where/Foo.app"), "/some/where/Foo.app")
-check("a home-relative path is returned unchanged", LSWrappers.copyAppPath(named: "~/Applications/Foo"), "~/Applications/Foo")
-check("an unknown name finds nothing", LSWrappers.copyAppPath(named: "NoSuchAppAnywhere"), nil)
+check("a name finds the application", LSWrappers.copyAppPaths(named: "TextEdit").map { $0.hasSuffix("/TextEdit.app") }, [true])
+check("the name is case-insensitive and .app is optional", LSWrappers.copyAppPaths(named: "textedit.APP"), LSWrappers.copyAppPaths(named: "TextEdit"))
+check("a path is returned unchanged", LSWrappers.copyAppPaths(named: "/some/where/Foo.app"), ["/some/where/Foo.app"])
+check("a home-relative path is returned unchanged", LSWrappers.copyAppPaths(named: "~/Applications/Foo"), ["~/Applications/Foo"])
+check("an unknown name finds nothing", LSWrappers.copyAppPaths(named: "NoSuchAppAnywhere"), [])
 check("a registered bundle identifier is installed", LSWrappers.isAppInstalled(withBundleID: "com.apple.TextEdit"), true)
 check("an unknown bundle identifier is not installed", LSWrappers.isAppInstalled(withBundleID: "org.nonexistent.app"), false)
+
+// MARK: - Look-alikes: a copy somebody planted must never be the one a name finds
+
+section("planted copies")
+let planting = FileManager.default.temporaryDirectory.appendingPathComponent("swda-logic-\(ProcessInfo.processInfo.processIdentifier)")
+try? FileManager.default.removeItem(at: planting)
+func plant(_ relativePath: String, bundleID: String) -> String {
+    let bundle = planting.appendingPathComponent(relativePath)
+    let name = bundle.deletingPathExtension().lastPathComponent
+    let macOS = bundle.appendingPathComponent("Contents/MacOS")
+    try? FileManager.default.createDirectory(at: macOS, withIntermediateDirectories: true)
+    let info: [String: Any] = ["CFBundleIdentifier": bundleID, "CFBundlePackageType": "APPL", "CFBundleExecutable": name]
+    (info as NSDictionary).write(to: bundle.appendingPathComponent("Contents/Info.plist"), atomically: true)
+    FileManager.default.createFile(atPath: macOS.appendingPathComponent(name).path, contents: Data("#!/bin/sh\n".utf8), attributes: [.posixPermissions: 0o755])
+    return bundle.path
+}
+let fakeHome = planting.appendingPathComponent("home/Applications").path
+let textEdit = "/System/Applications/TextEdit.app"
+let inFakeHome = plant("home/Applications/TextEdit.app", bundleID: "com.apple.TextEdit")
+let inDownloads = plant("Downloads/TextEdit.app", bundleID: "com.apple.TextEdit")
+let inDisk = plant("Volumes/Disk/Foo.app", bundleID: "org.example.foo")
+let inDownloads2 = plant("Downloads/Foo.app", bundleID: "org.example.foo2")
+let nestedInDisk = plant("Volumes/Disk/Foo.app/Contents/Helpers/Foo.app", bundleID: "org.example.foo.helper")
+let inFakeHomeAlone = plant("home/Applications/Alone.app", bundleID: "org.example.alone")
+try? FileManager.default.createSymbolicLink(atPath: planting.appendingPathComponent("Link.app").path, withDestinationPath: inDisk)
+
+func best(_ paths: [String]) -> [String] { LSWrappers.copyBestApps(among: paths, userApplications: fakeHome) }
+check("a copy in the user's Applications loses to the system's", best([inFakeHome, textEdit]), [textEdit])
+check("whatever the order they are given in", best([textEdit, inFakeHome, inDownloads]), [textEdit])
+check("a copy in the user's Applications beats one anywhere else", best([inDownloads, inFakeHome]), [inFakeHome])
+check("a copy anywhere else is still found when it is the only one", best([inFakeHomeAlone]), [inFakeHomeAlone])
+check("a copy inside another bundle loses to one outside", best([nestedInDisk, inDisk]), [inDisk])
+check("two different applications in one place tie", best([inDownloads2, inDisk]), [inDisk, inDownloads2].sorted())
+check("two paths to one file count once", best([inDisk, planting.appendingPathComponent("Link.app").path]).count, 1)
+check("nothing in, nothing out", best([]), [])
+for (path, location) in [("/Applications/Foo.app", LSWrappers.AppLocation.system),
+                         ("/Applications/Utilities/Terminal.app", .system),
+                         ("/System/Applications/TextEdit.app", .system),
+                         ("/System/Library/CoreServices/Finder.app", .system),
+                         ("/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app", .system),
+                         ("/System/Volumes/Data/Applications/Foo.app", .system),
+                         ("/System/Volumes/Data/Users/someone/Downloads/Foo.app", .elsewhere),
+                         ("/Library/Foo/Helper.app", .system),
+                         ("/Users/someone/Downloads/Foo.app", .elsewhere),
+                         ("/Volumes/Disk/Foo.app", .elsewhere),
+                         ("/tmp/Applications/Foo.app", .elsewhere),
+                         ("/Applicationsx/Foo.app", .elsewhere),
+                         ("\(fakeHome)/Foo.app", .user),
+                         ("\(fakeHome)x/Foo.app", .elsewhere)] {
+    check("location of \(path)", LSWrappers.AppLocation(path: path, userApplications: fakeHome), location)
+}
+for (text, shaped) in [("com.apple.TextEdit", true), ("cl.fail.lordkamina.ThisAppDoesNothing", true), ("com.example.my-app_1", true),
+                       ("Safari", false), ("TextEdit.app", false), ("Visual Studio Code", false), ("/Applications/Foo.app", false), ("~/Foo.bar", false),
+                       ("", false), (".", false), ("com..x", false), ("com.example.", false), ("com.ex\u{00E4}mple.x", false), ("com.example.x\n", false)] {
+    check("isBundleID(\(text.debugDescription))", LSWrappers.isBundleID(text), shaped)
+}
+check("a planted Do Nothing with the right identifier is not genuine", DoNothingApp.isGenuine(URL(fileURLWithPath: plant("Downloads/ThisAppDoesNothing.app", bundleID: DoNothingApp.bundleID))), false)
+check("a planted Do Nothing is not registered on demand", LSWrappers.ensureRegistered(LSWrappers.ResolvedApp(url: URL(fileURLWithPath: planting.appendingPathComponent("Downloads/ThisAppDoesNothing.app").path), bundleID: DoNothingApp.bundleID)), false)
+check("an application that is not Do Nothing is not genuine", DoNothingApp.isGenuine(URL(fileURLWithPath: textEdit)), false)
+check("a missing Do Nothing is not genuine", DoNothingApp.isGenuine(URL(fileURLWithPath: "/nonexistent/ThisAppDoesNothing.app")), false)
+check("an ambiguous name asks for a path", E.ambiguousApp.print(argument: (app: "NoSuchAppAnywhere", content: nil)),
+      "SwiftDefaultApps ERROR 1001: NoSuchAppAnywhere matches more than one application. Give the path of the one you mean.")
+check("1001 is ours", E(value: 1001), .ambiguousApp)
+check("1001 from the system is not", E(NSError(domain: NSOSStatusErrorDomain, code: 1001)), .defaultErr)
+check("what was typed is shown with its control characters escaped", E.notAnApp.print(argument: (app: "a\u{1B}[2J", content: nil)),
+      "SwiftDefaultApps ERROR -10811: a\\u{1B}[2J is not a valid application.")
+try? FileManager.default.removeItem(at: planting)
 
 // MARK: - Setters: requests that must be refused before anything is written
 

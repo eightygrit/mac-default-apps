@@ -22,15 +22,33 @@ enum DoNothingApp {
 	}
 
 	/**
+	The folders a copy may be handed out from: the one the program ships it in (inside the app, or next to the command-line tool) and
+	`/Applications`. A copy anywhere else, such as one registered by an old build, or one that somebody planted, is not used.
+	*/
+	private static var homes: [URL] {
+		let own: URL? = areWeCLI() ? Bundle.main.bundleURL : Bundle.main.resourceURL
+		return [own].compactMap { $0 } + FileManager.default.urls(for: .applicationDirectory, in: .localDomainMask)
+	}
+
+	/**
+	Whether an application is Do Nothing: the right bundle identifier and package type, a program to run, and a place it may be handed out from.
+	- Parameter url: An application bundle.
+	*/
+	static func isGenuine(_ url: URL) -> Bool {
+		guard let bundle = Bundle(url: url), bundle.bundleIdentifier == bundleID,
+			  bundle.object(forInfoDictionaryKey: "CFBundlePackageType") as? String == "APPL",
+			  let executable = bundle.executableURL, FileManager.default.isExecutableFile(atPath: executable.path) else { return false }
+		let folder = url.resolvingSymlinksInPath().deletingLastPathComponent().path
+		return homes.contains { $0.resolvingSymlinksInPath().path == folder }
+	}
+
+	/**
 	Finds a copy to hand out. This is a query: it registers and launches nothing.
-	- Returns: The copy Launch Services already knows, if it is still on disk; otherwise the copy next to the CLI, inside the app or in an Applications folder; nil if there is none.
+	- Returns: The genuine copy Launch Services already knows, if it is still on disk; otherwise the one next to the CLI, inside the app or in `/Applications`; nil if there is none.
 	*/
 	static func copyURL() -> URL? {
-		if let registered = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID), FileManager.default.fileExists(atPath: registered.path) {
-			return registered
-		}
-		let home: URL? = areWeCLI() ? Bundle.main.bundleURL : Bundle.main.resourceURL
-		let searchPaths = [home].compactMap { $0 } + FileManager.default.urls(for: .applicationDirectory, in: .allDomainsMask)
-		return searchPaths.map { $0.appendingPathComponent(fileName).absoluteURL }.first { FileManager.default.isExecutableFile(atPath: $0.path) }
+		let registered = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: bundleID)
+		let shipped = homes.map { $0.appendingPathComponent(fileName) }
+		return (registered + shipped).first(where: isGenuine)
 	}
 }

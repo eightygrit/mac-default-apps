@@ -28,6 +28,7 @@ class LSWrappers {
 	- defaultErr: Unknown error, for cases not covered above. 
 	- invalidFileURL: Trying to locate a file with a scheme different from file://
 	- unknownUTI: The system does not know the Uniform Type Identifier.
+	- ambiguousApp: A name matches more than one application and nothing says which was meant; the path of one does.
 	- canceled: The user canceled the confirmation macOS asks for before it changes a default handler.
 	- permissionDenied: The system, or the sandbox the program runs in, did not allow the change.
 	- timedOut: The change was not confirmed in time.
@@ -47,6 +48,8 @@ class LSWrappers {
 		case canceled = -128
 		case permissionDenied = -54
 		case timedOut = -1712
+		/// Ours, not the system's: it has no code of its own, so this one stays clear of every range the system uses.
+		case ambiguousApp = 1001
 		
 		case noError = 0
 		
@@ -65,6 +68,7 @@ class LSWrappers {
 			case -128: self = .canceled
 			case -54: self = .permissionDenied
 			case -1712: self = .timedOut
+			case 1001: self = .ambiguousApp
 				
 			case 0: self = .noError
 			default: self = .defaultErr
@@ -83,7 +87,7 @@ class LSWrappers {
 				if current.domain == NSCocoaErrorDomain && current.code == NSUserCancelledError { self = .canceled; return }
 				if current.domain == NSCocoaErrorDomain && current.code == NSFileWriteNoPermissionError { self = .permissionDenied; return }
 				if current.domain == NSPOSIXErrorDomain && (current.code == Int(EPERM) || current.code == Int(EACCES)) { self = .permissionDenied; return }
-				if current.domain == NSOSStatusErrorDomain, let known = LSErrors(rawValue: OSStatus(truncatingIfNeeded: current.code)), known != .noError { self = known; return }
+				if current.domain == NSOSStatusErrorDomain, let known = LSErrors(rawValue: OSStatus(truncatingIfNeeded: current.code)), known != .noError, known != .ambiguousApp { self = known; return }
 				next = current.userInfo[NSUnderlyingErrorKey] as? NSError
 			}
 			self = .defaultErr
@@ -98,7 +102,9 @@ class LSWrappers {
 		- Returns: Human-readable error message specifying the problem, or unknown error if the problem is something not accounted for here.
 		*/
 		func print(argument: (app: String?, content: String?) = (String(),String())) -> String {
-			let app = argument.app ?? String(), content = argument.content ?? String()
+			// What was typed goes back to a terminal: control characters in it are shown as escapes, not sent.
+			let raw = argument.app ?? String()
+			let app = displayable(raw), content = displayable(argument.content ?? String())
 			var retValue = (self == .noError ? "SwiftDefaultApps SUCCESS: " : "SwiftDefaultApps ERROR \(self.rawValue): ")
 			switch self {
 			case .notAnApp: retValue += "\(app) is not a valid application."
@@ -113,10 +119,13 @@ class LSWrappers {
 			case .canceled: retValue += "Changing the default handler for \(content) was canceled."
 			case .permissionDenied: retValue += "macOS did not allow changing the default handler for \(content)."
 			case .timedOut: retValue += "Timed out waiting for the change of the default handler for \(content)."
+			case .ambiguousApp:
+				let paths = LSWrappers.copyAppPaths(named: raw).map(displayable)
+				retValue += "\(app) matches more than one application" + (paths.isEmpty ? "." : ": \(paths.joined(separator: ", ")).") + " Give the path of the one you mean."
 			case .noError: retValue += "Default handler has successfully changed to \(app)"
 			case .defaultErr: retValue += "An unknown error has occurred."
 			}
-			if ((self == .appNotFound || self == .deletedApp) && DoNothingApp.isNamed(argument.app)) { retValue += " (This error occurs when \(DoNothingApp.fileName) is not found.)" }
+			if ((self == .appNotFound || self == .deletedApp) && DoNothingApp.isNamed(raw)) { retValue += " (This error occurs when \(DoNothingApp.fileName) is not found.)" }
 			return retValue
 		}
 	}
@@ -391,34 +400,84 @@ class LSWrappers {
 	- Returns: `true` if Launch Services knows the application, `false` if it does not and could not be made to.
 	*/
 	static func ensureRegistered (_ app: ResolvedApp) -> Bool {
-		if isAppInstalled(withBundleID: app.bundleID) && FileManager.default.fileExists(atPath: app.url.path) { return true }
-		return app.bundleID == DoNothingApp.bundleID && LSRegisterURL(app.url as CFURL, true) == noErr
+		guard FileManager.default.fileExists(atPath: app.url.path) else { return false }
+		guard app.bundleID == DoNothingApp.bundleID else { return isAppInstalled(withBundleID: app.bundleID) }
+		// Another copy of Do Nothing can be the registered one (a stale build, say); what is handed out is the copy that was chosen.
+		guard DoNothingApp.isGenuine(app.url) else { return false }
+		let known = NSWorkspace.shared.urlsForApplications(withBundleIdentifier: app.bundleID).map { $0.resolvingSymlinksInPath().path }
+		return known.contains(app.url.resolvingSymlinksInPath().path) || LSRegisterURL(app.url as CFURL, true) == noErr
 	}
 	/**
-	Finds an application by its file name. Stands in for `NSWorkspace.fullPath(forApplication:)`, which is deprecated and has no replacement. Like it, anything that looks like a path is returned unchanged; otherwise registered applications are matched by file name (case-insensitive, ".app" optional, so "Spotlight.service" matches too).
-	- Note: Several registered copies can share a name (helpers nested inside other apps, an updater's staging copy). The best one wins: a copy outside another bundle beats one inside it, one in a standard Applications folder beats one elsewhere, the copy Launch Services itself ranks first for its bundle identifier beats the others, and the shortest path decides the rest.
-	- Parameter name: A path, or the name of an application, with or without ".app".
-	- Returns: A POSIX path, or nil if no registered application has that name.
+	Where a copy of an application lives, from the place a copy can be trusted most to the place it can be trusted least. Only an administrator can write to the first, so a program running as the user cannot put a look-alike there.
 	*/
-	static func copyAppPath (named name: String) -> String? {
-		if name.hasPrefix("/") || name.hasPrefix("~") { return name }
-		let wanted = name.lowercased().hasSuffix(".app") ? [name.lowercased()] : [name.lowercased(), "\(name.lowercased()).app"]
-		let matches = (copyAllApps() ?? []).filter { wanted.contains(($0 as NSString).lastPathComponent.lowercased()) }
-		let standardFolders = FileManager.default.urls(for: .applicationDirectory, in: .allDomainsMask).map { $0.path } + ["/System/Library/CoreServices"]
-		// Lower is better.
-		func rank(_ path: String) -> Int {
-			let isNested = path.dropLast(4).contains(".app/")
-			let isStandard = standardFolders.contains { path.hasPrefix($0 + "/") }
-			let isPreferred = Bundle(path: path)?.bundleIdentifier.flatMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)?.path } == path
-			return (isNested ? 4 : 0) + (isStandard ? 0 : 2) + (isPreferred ? 0 : 1)
+	enum AppLocation: Int, Comparable {
+		/// `/Applications`, `/System` (the Safari Cryptex is under it too) and `/Library`.
+		case system
+		/// The user's own Applications folder.
+		case user
+		/// Anywhere else: a download, a disk image, a build folder.
+		case elsewhere
+
+		/**
+		- Parameters:
+		  - path: A POSIX path to an application.
+		  - userApplications: The user's Applications folder; the default is the real one.
+		*/
+		init(path: String, userApplications: String = FileManager.default.urls(for: .applicationDirectory, in: .userDomainMask).first?.path ?? "") {
+			var real = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+			// The data volume is where the user's files live; it shows through under /System/Volumes/Data, which is not the system.
+			if real.hasPrefix("/System/Volumes/Data/") { real = String(real.dropFirst("/System/Volumes/Data".count)) }
+			let mine = URL(fileURLWithPath: userApplications).resolvingSymlinksInPath().path
+			if ["/Applications/", "/System/", "/Library/"].contains(where: { real.hasPrefix($0) }) { self = .system }
+			else if !mine.isEmpty && real.hasPrefix(mine + "/") { self = .user }
+			else { self = .elsewhere }
 		}
-		return matches.min { (rank($0), $0.count) < (rank($1), $1.count) }
+		static func < (lhs: AppLocation, rhs: AppLocation) -> Bool { lhs.rawValue < rhs.rawValue }
+	}
+	/**
+	Chooses among copies of an application that share a file name. The best copy is one outside another bundle, in the most trusted location, that Launch Services itself prefers for its bundle identifier; each of the three outranks the ones after it.
+	- Parameters:
+	  - paths: POSIX paths of applications. Two paths to one file count once.
+	  - userApplications: The user's Applications folder; the default is the real one.
+	- Returns: The best copies, one path per file, sorted: one path if one copy is best, several if nothing tells them apart, none if `paths` is empty.
+	*/
+	static func copyBestApps (among paths: [String], userApplications: String? = nil) -> [String] {
+		func rank(_ path: String) -> (Int, AppLocation, Int) {
+			let isNested = path.dropLast(4).contains(".app/")
+			let location = userApplications.map { AppLocation(path: path, userApplications: $0) } ?? AppLocation(path: path)
+			let preferred = Bundle(path: path)?.bundleIdentifier.flatMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
+			let isPreferred = preferred?.resolvingSymlinksInPath().path == URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+			return (isNested ? 1 : 0, location, isPreferred ? 0 : 1)
+		}
+		var seen = Set<String>()
+		let distinct = paths.sorted().filter { seen.insert(URL(fileURLWithPath: $0).resolvingSymlinksInPath().path).inserted }
+		let ranked = distinct.map { (path: $0, rank: rank($0)) }
+		guard let best = ranked.map(\.rank).min(by: { $0 < $1 }) else { return [] }
+		return ranked.filter { $0.rank == best }.map(\.path)
+	}
+	/**
+	Finds applications by their file name. Stands in for `NSWorkspace.fullPath(forApplication:)`, which is deprecated and has no replacement. Like it, anything that looks like a path is returned unchanged; otherwise registered applications are matched by file name (case-insensitive, ".app" optional, so "Spotlight.service" matches too).
+	- Note: Several registered copies can share a name (helpers nested inside other apps, an updater's staging copy, a look-alike somebody planted). `copyBestApps(among:userApplications:)` picks the best; where nothing tells the best apart, all of them are returned and `resolveApp(_:)` refuses to guess.
+	- Parameter name: A path, or the name of an application, with or without ".app".
+	- Returns: The path itself, or the POSIX paths of the best registered copies: none if no registered application has that name, several if the name is ambiguous.
+	*/
+	static func copyAppPaths (named name: String) -> [String] {
+		if name.hasPrefix("/") || name.hasPrefix("~") { return [name] }
+		let wanted = name.lowercased().hasSuffix(".app") ? [name.lowercased()] : [name.lowercased(), "\(name.lowercased()).app"]
+		return copyBestApps(among: (copyAllApps() ?? []).filter { wanted.contains(($0 as NSString).lastPathComponent.lowercased()) })
+	}
+	/**
+	Whether text has the shape of a bundle identifier: dot-separated, non-empty words of ASCII letters, digits, hyphens and underscores. A file name such as "Safari" does not; an identifier is the only thing that is looked up by identifier.
+	*/
+	static func isBundleID (_ text: String) -> Bool {
+		guard text.contains("."), !text.lowercased().hasSuffix(".app"), !text.split(separator: ".", omittingEmptySubsequences: false).contains(where: \.isEmpty) else { return false }
+		return text.unicodeScalars.allSatisfy { ($0.isASCII && ($0.properties.isAlphabetic || $0.properties.numericType != nil)) || $0 == "." || $0 == "-" || $0 == "_" }
 	}
 	/**
 	Performs a myriad of sanity checks on user input corresponding to a possible application. The main purpose of this function is to make sure we're passing a value as sane as possible to the setHandler functions.
 	- See Also: `enum LSErrors` above.
 	- Parameter inParam: The application to locate. It might correspond to a file-system URL, a POSIX path, a display name, a bundle identifier, or "None".
-	- Returns: The application, or the error that says why it cannot be used.
+	- Returns: The application, or the error that says why it cannot be used. The bundle identifier of the result is the one in the application's own Info.plist, whatever spelling was typed.
 	*/
 	static func resolveApp (_ inParam: String) -> Result<ResolvedApp, LSErrors> {
 		var errCode = OSStatus()
@@ -432,10 +491,12 @@ class LSWrappers {
 			guard let url = DoNothingApp.copyURL() else { return .failure(.appNotFound) }
 			return .success(ResolvedApp(url: url, bundleID: DoNothingApp.bundleID))
 		}
-		if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: inParam) { // Check whether we have a valid Bundle ID for an application.
-			return .success(ResolvedApp(url: url, bundleID: inParam))
+		if isBundleID(inParam), let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: inParam) { // Check whether we have a valid Bundle ID for an application.
+			return .success(ResolvedApp(url: url, bundleID: Bundle(url: url)?.bundleIdentifier ?? inParam))
 		}
-		else if let appPath = copyAppPath(named: inParam) { // Or an application designed by name
+		let appPaths = copyAppPaths(named: inParam) // Or an application designed by name
+		if appPaths.count > 1 { return .failure(.ambiguousApp) }
+		if let appPath = appPaths.first {
 			if let bundle = Bundle(path: appPath) { return app(from: bundle, allowing: ["APPL", "FNDR"]) }
 			return filemanager.fileExists(atPath: inParam) ? .failure(.notAnApp) : .failure(.appNotFound)
 		}

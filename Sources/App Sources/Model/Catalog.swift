@@ -200,14 +200,22 @@ enum Catalog {
 	/** Order of kind groups in the sidebar. */
 	static let kindOrder: [String] = kinds.map(\.0) + ["Other"]
 
+	/** An application the user picked as a handler: one the menu names by bundle identifier, or one chosen from disk with "Other…". */
+	struct HandlerChoice {
+		let bundleID: String
+		/** Where the application is, when the user chose a file. Nil when only the bundle identifier is known. */
+		var url: URL? = nil
+	}
+
 	/**
 	Sets the default handler and waits for macOS to say it is done, which can mean waiting for the user to answer a
 	confirmation. Canceling it arrives as `.canceled`. A change of one role alone is made by a function that answers at once,
 	so `settledDefault` is what waits for that.
 	*/
-	static func setDefault(_ bundleID: String, for content: String, isScheme: Bool, role: Role = .all) async -> Result<Void, LSWrappers.LSErrors> {
+	static func setDefault(_ choice: HandlerChoice, for content: String, isScheme: Bool, role: Role = .all) async -> Result<Void, LSWrappers.LSErrors> {
 		let app: LSWrappers.ResolvedApp
-		switch LSWrappers.resolveApp(bundleID) {
+		// A file the user picked is that file, not whichever copy Launch Services ranks first for its bundle identifier.
+		switch LSWrappers.resolveApp(choice.url?.path ?? choice.bundleID) {
 		case .failure(let error): return .failure(error)
 		case .success(let resolved): app = resolved
 		}
