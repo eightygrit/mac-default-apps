@@ -13,8 +13,11 @@
 # FAIL_ON_WARNINGS=1 makes any warning end the script with status 1, as an error does (the build of record has none).
 # Compare two builds with: diff <old>/diagnostics.txt <new>/diagnostics.txt
 #
-# Launch Services registers freshly built applications, which changes what swda lists. When you compare
-# golden output, record the reference build and the candidate back-to-back.
+# Xcode registers each application it builds with Launch Services, which would put a copy under <output-dir> into what
+# swda lists (and, for ThisAppDoesNothing.app, make it the handler of the * scheme). The script takes them out again as
+# soon as the build ends, so that a scratch build leaves nothing behind; KEEP_REGISTERED=1 keeps them registered, for
+# looking at one in the Finder or opening it. Installing an application still changes what swda lists, so when you
+# compare golden output, record the reference build and the candidate back-to-back.
 set -u
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 kind="${1:-}"; out="${2:-}"
@@ -34,6 +37,11 @@ xcodebuild -project "$project" -target "$target" -configuration Release \
 	CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO DEVELOPMENT_TEAM="" \
 	SYMROOT="$out/products" OBJROOT="$out/obj" >"$out/build.log" 2>&1
 rc=$?
+lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+if [ "${KEEP_REGISTERED:-0}" != 1 ] && [ -x "$lsregister" ]; then
+	# Every bundle ending in .app, the copy of Do Nothing inside SwiftDefaultApps.app included: it is registered on its own.
+	find "$out/products" -name '*.app' -print0 2>/dev/null | while IFS= read -r -d '' built; do "$lsregister" -u "$built"; done
+fi
 grep -E 'BUILD (SUCCEEDED|FAILED)' "$out/build.log" | tail -1
 grep -E '^/.*: (warning|error):' "$out/build.log" | sed -E "s#^$repo/##" | sort -u >"$out/diagnostics.txt"
 warnings="$(grep -c ': warning:' "$out/diagnostics.txt")"

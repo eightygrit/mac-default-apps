@@ -27,8 +27,9 @@ invocations that fail before they reach Launch Services (unresolvable applicatio
 option). Lists whose order is not part of the contract are sorted.
 
 Compare a change with the build before it. Record **both** back to back, because Launch Services drifts: building or
-installing an application registers it, and registering `ThisAppDoesNothing.app` adds it as a handler for
-`public.item` and for the `*` scheme, which changes several cases. Build the reference in a worktree of its own, so that
+installing an application registers it (`build-scratch.sh` takes its own builds out again, `build.sh` does not), and
+registering `ThisAppDoesNothing.app` adds it as a handler for `public.item` and for the `*` scheme, which changes
+several cases. Build the reference in a worktree of its own, so that
 your checkout and its uncommitted work stay as they are (the reference needs `build-scratch.sh`, so it cannot be older
 than that script):
 
@@ -135,7 +136,9 @@ Tests/build-scratch.sh dummy /tmp/swda-dummy   # ThisAppDoesNothing.app
 
 It prints the result and the number of distinct compiler warnings, and keeps them in `diagnostics.txt` so two
 builds can be compared with `diff`; `FAIL_ON_WARNINGS=1` turns any warning into a failure, as the CI does. Unlike
-`build.sh` it does not sign, install or back anything up.
+`build.sh` it does not sign, install or back anything up. Xcode registers each application it builds with Launch
+Services; the script unregisters them again when the build ends, so no copy under the output directory shows up in
+`swda getApps` (or becomes the handler of the `*` scheme). `KEEP_REGISTERED=1` leaves them registered.
 
 ## CI
 
